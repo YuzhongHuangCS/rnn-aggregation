@@ -12,6 +12,7 @@ import tensorflow as tf
 import random
 import copy
 from briercompute import brier
+from datetime import datetime, timedelta
 
 def is_ordered(opt):
 	keywords = ['Less', 'Between', 'More', 'inclusive','less', 'between', 'more']
@@ -24,6 +25,7 @@ def is_ordered(opt):
 	return False
 
 db_answer = {}
+db_dates = {}
 for filename in ('data/dump_questions_rcta.csv', 'data/dump_questions_rctb.csv'):
 	df_question = pd.read_csv(filename)
 	for index, row in df_question.iterrows():
@@ -40,6 +42,16 @@ for filename in ('data/dump_questions_rcta.csv', 'data/dump_questions_rctb.csv')
 					print(ifp_id)
 				else:
 					db_answer[ifp_id] = [answer, is_ordered(clean_options)]
+
+					start_date = dateutil.parser.parse(row['start_date']).replace(hour=0, minute=0, second=0, microsecond=0)
+					end_date = dateutil.parser.parse(row['end_date']).replace(hour=0, minute=0, second=0, microsecond=0)
+
+					forecast_dates = []
+					forecast_date = start_date
+					while forecast_date <= end_date:
+						forecast_dates.append(forecast_date)
+						forecast_date += timedelta(days=1)
+					db_dates[ifp_id] = forecast_dates
 			except ValueError as e:
 				pdb.set_trace()
 				print(e)
@@ -91,72 +103,100 @@ n_test = n_all - n_train
 ifp_train = all_ifp_shuffle[:n_train]
 ifp_test = all_ifp_shuffle[n_train:]
 
-N_RNN_DIM = 32
+N_RNN_DIM = 128
 
 ### TRAIN data
-input_train = np.zeros((n_train, max_steps, 5))
-target_train = np.zeros((n_train, 5))
-answer_train = np.zeros(n_train, dtype=int)
-is_ordered_train = np.zeros(n_train, dtype=int)
-seq_length_train = np.zeros(n_train, dtype=int)
-gather_index_train = np.zeros((n_train, 2), dtype=int)
-num_option_mask_train = np.zeros((n_train, 5), dtype=int)
+n_forecast_train = sum([len(v) for k, v in db_dates.items() if k in ifp_train])
 
+input_train = np.zeros((n_train, max_steps, 5))
+target_train = np.zeros((n_forecast_train, 5))
+answer_train = np.zeros(n_forecast_train, dtype=int)
+is_ordered_train = np.zeros(n_forecast_train, dtype=int)
+weight_train = np.zeros(n_forecast_train)
+seq_length_train = np.zeros(n_train, dtype=int)
+gather_index_train = np.zeros((n_forecast_train, 2), dtype=int)
+num_option_mask_train = np.zeros((n_forecast_train, 5))
+
+forecast_index = 0
 for index, ifp in enumerate(ifp_train):
 	forecasts = db[ifp]
 
 	for i, forecast in enumerate(forecasts):
 		input_train[index, i] = forecast[-5:]
 
+	forecast_dates = db_dates[ifp]
+	n_forecasts = len(forecast_dates)
+	activity_dates = [dateutil.parser.parse(x[0]) for x in forecasts]
+
 	answer, is_ordered = db_answer[ifp]
-	target_train[index, answer] = 1
-	answer_train[index] = answer
-	is_ordered_train[index] = is_ordered
+	target_train[forecast_index:forecast_index+n_forecasts, answer] = 1
+	answer_train[forecast_index:forecast_index+n_forecasts] = answer
+	is_ordered_train[forecast_index:forecast_index+n_forecasts] = is_ordered
+	weight_train[forecast_index:forecast_index+n_forecasts] = ((1.0 / n_forecasts) / n_train) * n_forecast_train
 	seq_length_train[index] = len(forecasts)
 
-	gather_index_train[index, :] = [index, len(forecasts)-1]
+	for i, forecast_date in enumerate(forecast_dates[1:]):
+		this_index = np.searchsorted(activity_dates, forecast_date)
+		gather_index_train[forecast_index+i, :] = [forecast_index+i, this_index-1]
+
+	gather_index_train[forecast_index+i+1, :] = [forecast_index+i+1, len(forecasts)-1]
 
 	num_options = forecasts[0][3]
-	num_option_mask_train[index, :num_options] = 1
+	num_option_mask_train[forecast_index:forecast_index+n_forecasts, :num_options] = 1
 
+	forecast_index += n_forecasts
 
 input_train[np.isnan(input_train)] = 0
 
 ### TEST data
-input_test = np.zeros((n_test, max_steps, 5))
-target_test = np.zeros((n_test, 5))
-answer_test = np.zeros(n_test, dtype=int)
-is_ordered_test = np.zeros(n_test, dtype=int)
-seq_length_test = np.zeros(n_test, dtype=int)
-gather_index_test = np.zeros((n_test, 2), dtype=int)
-num_option_mask_test = np.zeros((n_test, 5))
+n_forecast_test = sum([len(v) for k, v in db_dates.items() if k in ifp_test])
 
+input_test = np.zeros((n_test, max_steps, 5))
+target_test = np.zeros((n_forecast_test, 5))
+answer_test = np.zeros(n_forecast_test, dtype=int)
+is_ordered_test = np.zeros(n_forecast_test, dtype=int)
+weight_test = np.zeros(n_forecast_test)
+seq_length_test = np.zeros(n_test, dtype=int)
+gather_index_test = np.zeros((n_forecast_test, 2), dtype=int)
+num_option_mask_test = np.zeros((n_forecast_test, 5))
+
+forecast_index = 0
 for index, ifp in enumerate(ifp_test):
 	forecasts = db[ifp]
 
 	for i, forecast in enumerate(forecasts):
 		input_test[index, i] = forecast[-5:]
 
+	forecast_dates = db_dates[ifp]
+	n_forecasts = len(forecast_dates)
+	activity_dates = [dateutil.parser.parse(x[0]) for x in forecasts]
+
 	answer, is_ordered = db_answer[ifp]
-	target_test[index, answer] = 1
-	answer_test[index] = answer
-	is_ordered_test[index] = is_ordered
+	target_test[forecast_index:forecast_index+n_forecasts, answer] = 1
+	answer_test[forecast_index:forecast_index+n_forecasts] = answer
+	is_ordered_test[forecast_index:forecast_index+n_forecasts] = is_ordered
+	weight_test[forecast_index:forecast_index+n_forecasts] = ((1.0 / n_forecasts) / n_test) * n_forecast_test
 	seq_length_test[index] = len(forecasts)
 
-	gather_index_test[index, :] = [index, len(forecasts)-1]
+	for i, forecast_date in enumerate(forecast_dates[1:]):
+		this_index = np.searchsorted(activity_dates, forecast_date)
+		gather_index_test[forecast_index+i, :] = [forecast_index+i, this_index-1]
+
+	gather_index_test[forecast_index+i+1, :] = [forecast_index+i+1, len(forecasts)-1]
 
 	num_options = forecasts[0][3]
-	num_option_mask_test[index, :num_options] = 1
+	num_option_mask_test[forecast_index:forecast_index+n_forecasts, :num_options] = 1
 
+	forecast_index += n_forecasts
 
 input_test[np.isnan(input_test)] = 0
 
 # Network placeholder
 input_placeholder = tf.placeholder(tf.float32, [None, max_steps, 5])
-target_placeholder = tf.placeholder(tf.int32, [None, 5])
+target_placeholder = tf.placeholder(tf.float32, [None, 5])
 is_ordered_placeholder = tf.placeholder(tf.int32, [None])
 weight_placeholder = tf.placeholder(tf.float32, [None])
-seq_length_placeholder = tf.placeholder(tf.float32, [None])
+seq_length_placeholder = tf.placeholder(tf.int32, [None])
 gather_index_placeholder = tf.placeholder(tf.int32, [None, 2])
 num_option_mask_placeholder = tf.placeholder(tf.float32, [None, 5])
 
@@ -169,19 +209,20 @@ prediction = tf.matmul(needed_state, W1) + b1
 masked_prediction = tf.math.multiply(prediction, num_option_mask_placeholder)
 prob = tf.nn.softmax(masked_prediction)
 
-mse_loss = tf.losses.mean_squared_error(target_placeholder, prob)
-train_op = tf.train.AdamOptimizer(0.005).minimize(loss=mse_loss)
+loss_mse = tf.math.reduce_sum(tf.math.squared_difference(target_placeholder, prob), axis=1)
+loss_weighted = tf.losses.compute_weighted_loss(loss_mse, weight_placeholder)
+train_op = tf.train.AdamOptimizer(0.01).minimize(loss=loss_weighted)
 with tf.Session() as sess:
 	sess.run(tf.global_variables_initializer())
 
 	for i in range(100):
 		train_loss, train_pred, _train_step = sess.run(
-			[mse_loss, prob, train_op],
+			[loss_weighted, prob, train_op],
 				feed_dict={
 					input_placeholder: input_train,
 					target_placeholder: target_train,
 					is_ordered_placeholder: is_ordered_train,
-					#weight_placeholder: _current_cell_state,
+					weight_placeholder: weight_train,
 					seq_length_placeholder: seq_length_train,
 					gather_index_placeholder: gather_index_train,
 					num_option_mask_placeholder: num_option_mask_train
@@ -189,12 +230,12 @@ with tf.Session() as sess:
 		)
 
 		test_loss, test_pred = sess.run(
-			[mse_loss, prob],
+			[loss_weighted, prob],
 				feed_dict={
 					input_placeholder: input_test,
 					target_placeholder: target_test,
 					is_ordered_placeholder: is_ordered_test,
-					#weight_placeholder: _current_cell_state,
+					weight_placeholder: weight_test,
 					seq_length_placeholder: seq_length_test,
 					gather_index_placeholder: gather_index_test,
 					num_option_mask_placeholder: num_option_mask_test
