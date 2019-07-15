@@ -111,11 +111,13 @@ n_forecast_train = sum([len(v) for k, v in db_dates.items() if k in ifp_train])
 input_train = np.zeros((n_train, max_steps, 5))
 target_train = np.zeros((n_forecast_train, 5))
 answer_train = np.zeros(n_forecast_train, dtype=int)
-is_ordered_train = np.zeros(n_forecast_train, dtype=int)
+is_ordered_train = np.zeros(n_forecast_train, dtype=bool)
 weight_train = np.zeros(n_forecast_train)
 seq_length_train = np.zeros(n_train, dtype=int)
 gather_index_train = np.zeros((n_forecast_train, 2), dtype=int)
+num_option_ary_train = np.zeros(n_forecast_train, dtype=int)
 num_option_mask_train = np.zeros((n_forecast_train, 5))
+index_map_train = {}
 
 forecast_index = 0
 for index, ifp in enumerate(ifp_train):
@@ -142,8 +144,10 @@ for index, ifp in enumerate(ifp_train):
 	gather_index_train[forecast_index+i+1, :] = [forecast_index+i+1, len(forecasts)-1]
 
 	num_options = forecasts[0][3]
+	num_option_ary_train[forecast_index:forecast_index+n_forecasts] = num_options
 	num_option_mask_train[forecast_index:forecast_index+n_forecasts, :num_options] = 1
 
+	index_map_train[ifp] = list(range(forecast_index, forecast_index+n_forecasts))
 	forecast_index += n_forecasts
 
 input_train[np.isnan(input_train)] = 0
@@ -154,11 +158,13 @@ n_forecast_test = sum([len(v) for k, v in db_dates.items() if k in ifp_test])
 input_test = np.zeros((n_test, max_steps, 5))
 target_test = np.zeros((n_forecast_test, 5))
 answer_test = np.zeros(n_forecast_test, dtype=int)
-is_ordered_test = np.zeros(n_forecast_test, dtype=int)
+is_ordered_test = np.zeros(n_forecast_test, dtype=bool)
 weight_test = np.zeros(n_forecast_test)
 seq_length_test = np.zeros(n_test, dtype=int)
 gather_index_test = np.zeros((n_forecast_test, 2), dtype=int)
+num_option_ary_test = np.zeros(n_forecast_test, dtype=int)
 num_option_mask_test = np.zeros((n_forecast_test, 5))
+index_map_test = {}
 
 forecast_index = 0
 for index, ifp in enumerate(ifp_test):
@@ -185,8 +191,10 @@ for index, ifp in enumerate(ifp_test):
 	gather_index_test[forecast_index+i+1, :] = [forecast_index+i+1, len(forecasts)-1]
 
 	num_options = forecasts[0][3]
+	num_option_ary_test[forecast_index:forecast_index+n_forecasts] = num_options
 	num_option_mask_test[forecast_index:forecast_index+n_forecasts, :num_options] = 1
 
+	index_map_test[ifp] = list(range(forecast_index, forecast_index+n_forecasts))
 	forecast_index += n_forecasts
 
 input_test[np.isnan(input_test)] = 0
@@ -194,7 +202,7 @@ input_test[np.isnan(input_test)] = 0
 # Network placeholder
 input_placeholder = tf.placeholder(tf.float32, [None, max_steps, 5])
 target_placeholder = tf.placeholder(tf.float32, [None, 5])
-is_ordered_placeholder = tf.placeholder(tf.int32, [None])
+is_ordered_placeholder = tf.placeholder(tf.bool, [None])
 weight_placeholder = tf.placeholder(tf.float32, [None])
 seq_length_placeholder = tf.placeholder(tf.int32, [None])
 gather_index_placeholder = tf.placeholder(tf.int32, [None, 2])
@@ -206,11 +214,50 @@ W1 = tf.get_variable('W1', shape=(N_RNN_DIM, 5), initializer=tf.glorot_uniform_i
 b1 = tf.get_variable('b1', shape=(1, 5), initializer=tf.zeros_initializer())
 needed_state = tf.gather_nd(state_series, gather_index_placeholder)
 prediction = tf.matmul(needed_state, W1) + b1
-masked_prediction = tf.math.multiply(prediction, num_option_mask_placeholder)
-prob = tf.nn.softmax(masked_prediction)
+prediction_softmax = tf.nn.softmax(prediction)
+raw_prob = tf.math.multiply(prediction_softmax, num_option_mask_placeholder)
+prob_row_sum = tf.reduce_sum(raw_prob, axis=1)
+prob = tf.div(raw_prob, tf.reshape(prob_row_sum, (-1, 1)))
 
+lside_1 = tf.reduce_sum(tf.gather(prob, [0], axis=1), axis=1)
+rside_1 = tf.reduce_sum(tf.gather(prob, [1, 2, 3, 4], axis=1), axis=1)
+prob_1 = tf.stack([lside_1, rside_1], axis=1)
+lside_true_1 = tf.reduce_sum(tf.gather(target_placeholder, [0], axis=1), axis=1)
+rside_true_1 = tf.reduce_sum(tf.gather(target_placeholder, [1, 2, 3, 4], axis=1), axis=1)
+true_1 = tf.stack([lside_true_1, rside_true_1], axis=1)
+loss_1 = tf.math.reduce_sum(tf.math.squared_difference(prob_1, true_1), axis=1)
+
+lside_2 = tf.reduce_sum(tf.gather(prob, [0, 1], axis=1), axis=1)
+rside_2 = tf.reduce_sum(tf.gather(prob, [2, 3, 4], axis=1), axis=1)
+prob_2 = tf.stack([lside_2, rside_2], axis=1)
+lside_true_2 = tf.reduce_sum(tf.gather(target_placeholder, [0, 1], axis=1), axis=1)
+rside_true_2 = tf.reduce_sum(tf.gather(target_placeholder, [2, 3, 4], axis=1), axis=1)
+true_2 = tf.stack([lside_true_2, rside_true_2], axis=1)
+loss_2 = tf.math.reduce_sum(tf.math.squared_difference(prob_2, true_2), axis=1)
+
+lside_3 = tf.reduce_sum(tf.gather(prob, [0, 1, 2], axis=1), axis=1)
+rside_3 = tf.reduce_sum(tf.gather(prob, [3, 4], axis=1), axis=1)
+prob_3 = tf.stack([lside_3, rside_3], axis=1)
+lside_true_3 = tf.reduce_sum(tf.gather(target_placeholder, [0, 1, 2], axis=1), axis=1)
+rside_true_3 = tf.reduce_sum(tf.gather(target_placeholder, [3, 4], axis=1), axis=1)
+true_3 = tf.stack([lside_true_3, rside_true_3], axis=1)
+loss_3 = tf.math.reduce_sum(tf.math.squared_difference(prob_3, true_3), axis=1)
+
+lside_4 = tf.reduce_sum(tf.gather(prob, [0, 1, 2, 3], axis=1), axis=1)
+rside_4 = tf.reduce_sum(tf.gather(prob, [4], axis=1), axis=1)
+prob_4 = tf.stack([lside_4, rside_4], axis=1)
+
+lside_true_4 = tf.reduce_sum(tf.gather(target_placeholder, [0, 1, 2, 3], axis=1), axis=1)
+rside_true_4 = tf.reduce_sum(tf.gather(target_placeholder, [4], axis=1), axis=1)
+true_4 = tf.stack([lside_true_4, rside_true_4], axis=1)
+loss_4 = tf.math.reduce_sum(tf.math.squared_difference(prob_4, true_4), axis=1)
+
+loss_brier = tf.math.reduce_mean(tf.stack([loss_1, loss_2, loss_3, loss_4], axis=1), axis=1)
 loss_mse = tf.math.reduce_sum(tf.math.squared_difference(target_placeholder, prob), axis=1)
-loss_weighted = tf.losses.compute_weighted_loss(loss_mse, weight_placeholder)
+
+loss_combined = tf.where(is_ordered_placeholder, loss_brier, loss_mse)
+loss_weighted = tf.losses.compute_weighted_loss(loss_combined, weight_placeholder)
+
 train_op = tf.train.AdamOptimizer(0.01).minimize(loss=loss_weighted)
 with tf.Session() as sess:
 	sess.run(tf.global_variables_initializer())
@@ -242,9 +289,22 @@ with tf.Session() as sess:
 				}
 		)
 
-		train_brier = np.mean([brier(p, answer_train[i], is_ordered_train[i]) for i, p in enumerate(train_pred)])
-		test_brier = np.mean([brier(p, answer_test[i], is_ordered_test[i]) for i, p in enumerate(test_pred)])
-		print(i, train_loss, test_loss, train_brier, test_brier)
+		train_briers = np.asarray([brier(p[:num_option_ary_train[i]], answer_train[i], is_ordered_train[i]) for i, p in enumerate(train_pred)])
+		test_briers = np.asarray([brier(p[:num_option_ary_test[i]], answer_test[i], is_ordered_test[i]) for i, p in enumerate(test_pred)])
+
+		db_brier_train = {}
+		for ifp in ifp_train:
+			index = index_map_train[ifp]
+			scores = train_briers[index]
+			db_brier_train[ifp] = np.mean(scores)
+
+		db_brier_test = {}
+		for ifp in ifp_test:
+			index = index_map_test[ifp]
+			scores = test_briers[index]
+			db_brier_test[ifp] = np.mean(scores)
+
+		print(i, train_loss, test_loss, np.mean(list(db_brier_train.values())), np.mean(list(db_brier_test.values())))
 
 
 print('OK')
