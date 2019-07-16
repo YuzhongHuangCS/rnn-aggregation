@@ -90,18 +90,17 @@ for index, row in df.iterrows():
 	db[ifp_id].append([date,user_id,ifp_id,num_options,option_1,option_2,option_3,option_4,option_5])
 
 max_steps = max([len(v) for k, v in db.items()])
-n_all = len(db)
+all_ifp = np.asarray(list(db.keys()))
 
-all_ifp = list(db.keys())
-all_ifp_shuffle = copy.deepcopy(all_ifp)
-random.seed(2019)
-random.shuffle(all_ifp_shuffle)
+kf = sklearn.model_selection.KFold(shuffle=True, n_splits=5, random_state=2019)
+folds = [[all_ifp[f[0]], all_ifp[f[1]]] for f in kf.split(all_ifp)]
+fold_index = 1
 
-n_train = int(n_all*0.8)
-n_test = n_all - n_train
+ifp_train = folds[fold_index][0]
+ifp_test = folds[fold_index][1]
 
-ifp_train = all_ifp_shuffle[:n_train]
-ifp_test = all_ifp_shuffle[n_train:]
+n_train = len(ifp_train)
+n_test = len(ifp_test)
 
 N_RNN_DIM = 32
 
@@ -292,10 +291,17 @@ loss_combined = tf.where(is_ordered_placeholder, tf.where(is_4_placeholder, loss
 
 loss_weighted = tf.losses.compute_weighted_loss(loss_combined, weight_placeholder)
 
-train_op = tf.train.AdamOptimizer(0.01).minimize(loss=loss_weighted)
+loss_weighted_reg = loss_weighted
+variables = [v for v in tf.trainable_variables() if 'W' in v.name]
+
+for v in variables:
+	loss_weighted_reg += 0.01 * tf.nn.l2_loss(v) + 0.01 * tf.losses.absolute_difference(v, tf.zeros(tf.shape(v)))
+
+train_op = tf.train.AdamOptimizer(0.01).minimize(loss=loss_weighted_reg)
 with tf.Session() as sess:
 	sess.run(tf.global_variables_initializer())
 
+	test_scores = []
 	for i in range(100):
 		train_loss, train_pred, _train_step = sess.run(
 			[loss_weighted, prob, train_op],
@@ -327,22 +333,25 @@ with tf.Session() as sess:
 				}
 		)
 
-		train_briers = np.asarray([brier(p[:num_option_ary_train[i]], answer_train[i], is_ordered_train[i]) for i, p in enumerate(train_pred)])
-		test_briers = np.asarray([brier(p[:num_option_ary_test[i]], answer_test[i], is_ordered_test[i]) for i, p in enumerate(test_pred)])
+		print(i, train_loss, test_loss)
+		test_scores.append(test_loss)
+		if i == 0:
+			train_briers = np.asarray([brier(p[:num_option_ary_train[i]], answer_train[i], is_ordered_train[i]) for i, p in enumerate(train_pred)])
+			test_briers = np.asarray([brier(p[:num_option_ary_test[i]], answer_test[i], is_ordered_test[i]) for i, p in enumerate(test_pred)])
 
-		db_brier_train = {}
-		for ifp in ifp_train:
-			index = index_map_train[ifp]
-			scores = train_briers[index]
-			db_brier_train[ifp] = np.mean(scores)
+			db_brier_train = {}
+			for ifp in ifp_train:
+				index = index_map_train[ifp]
+				scores = train_briers[index]
+				db_brier_train[ifp] = np.mean(scores)
 
-		db_brier_test = {}
-		for ifp in ifp_test:
-			index = index_map_test[ifp]
-			scores = test_briers[index]
-			db_brier_test[ifp] = np.mean(scores)
+			db_brier_test = {}
+			for ifp in ifp_test:
+				index = index_map_test[ifp]
+				scores = test_briers[index]
+				db_brier_test[ifp] = np.mean(scores)
 
-		print(i, train_loss, test_loss, np.mean(list(db_brier_train.values())), np.mean(list(db_brier_test.values())))
+			print(i, train_loss, test_loss, np.mean(list(db_brier_train.values())), np.mean(list(db_brier_test.values())))
 
-
+	print('min test loss', np.min(test_scores))
 print('OK')
