@@ -1,12 +1,3 @@
-import os
-
-# uncomment to force CPU training
-os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
-
-# optimize CPU performance
-os.environ['KMP_BLOCKTIME'] = '0'
-os.environ['KMP_AFFINITY'] = 'granularity=fine,verbose,compact,1,0'
-
 import pandas as pd
 import pdb
 import dateutil.parser
@@ -25,7 +16,7 @@ from datetime import datetime, timedelta
 
 def is_ordered(opt):
 	keywords = ['Less', 'Between', 'More', 'inclusive','less', 'between', 'more']
-	if len(opt) == 1: #binary
+	if len(opt) <= 2: #binary
 		return False
 	for o in opt:
 		if any(x in o for x in keywords):
@@ -58,7 +49,7 @@ for filename in ('data/dump_questions_rcta.csv', 'data/dump_questions_rctb.csv')
 					forecast_dates = []
 					forecast_date = start_date
 					while forecast_date <= end_date:
-						forecast_dates.append(forecast_date.replace(hour=23, minute=59, second=59, microsecond=999))
+						forecast_dates.append(forecast_date)
 						forecast_date += timedelta(days=1)
 					db_dates[ifp_id] = forecast_dates
 			except ValueError as e:
@@ -121,6 +112,8 @@ input_train = np.zeros((n_train, max_steps, 5))
 target_train = np.zeros((n_forecast_train, 5))
 answer_train = np.zeros(n_forecast_train, dtype=int)
 is_ordered_train = np.zeros(n_forecast_train, dtype=bool)
+is_4_train = np.zeros(n_forecast_train, dtype=bool)
+is_3_train = np.zeros(n_forecast_train, dtype=bool)
 weight_train = np.zeros(n_forecast_train)
 seq_length_train = np.zeros(n_train, dtype=int)
 gather_index_train = np.zeros((n_forecast_train, 2), dtype=int)
@@ -156,6 +149,12 @@ for index, ifp in enumerate(ifp_train):
 		gather_index_train[forecast_index+i, :] = [index, this_index-1]
 
 	num_options = forecasts[0][3]
+	if num_options == 4:
+		is_4_train[forecast_index:forecast_index+n_forecasts] = True
+	else:
+		if num_options == 3:
+			is_3_train[forecast_index:forecast_index+n_forecasts] = True
+
 	num_option_ary_train[forecast_index:forecast_index+n_forecasts] = num_options
 	num_option_mask_train[forecast_index:forecast_index+n_forecasts, :num_options] = 1
 
@@ -171,6 +170,8 @@ input_test = np.zeros((n_test, max_steps, 5))
 target_test = np.zeros((n_forecast_test, 5))
 answer_test = np.zeros(n_forecast_test, dtype=int)
 is_ordered_test = np.zeros(n_forecast_test, dtype=bool)
+is_4_test = np.zeros(n_forecast_test, dtype=bool)
+is_3_test = np.zeros(n_forecast_test, dtype=bool)
 weight_test = np.zeros(n_forecast_test)
 seq_length_test = np.zeros(n_test, dtype=int)
 gather_index_test = np.zeros((n_forecast_test, 2), dtype=int)
@@ -203,10 +204,15 @@ for index, ifp in enumerate(ifp_test):
 		while this_index == 0:
 			this_index = np.searchsorted(activity_dates, forecast_dates[i2+1])
 			i2 += 1
-
 		gather_index_test[forecast_index+i, :] = [index, this_index-1]
 
 	num_options = forecasts[0][3]
+	if num_options == 4:
+		is_4_test[forecast_index:forecast_index+n_forecasts] = True
+	else:
+		if num_options == 3:
+			is_3_test[forecast_index:forecast_index+n_forecasts] = True
+
 	num_option_ary_test[forecast_index:forecast_index+n_forecasts] = num_options
 	num_option_mask_test[forecast_index:forecast_index+n_forecasts, :num_options] = 1
 
@@ -219,6 +225,8 @@ input_test[np.isnan(input_test)] = 0
 input_placeholder = tf.placeholder(tf.float32, [None, max_steps, 5])
 target_placeholder = tf.placeholder(tf.float32, [None, 5])
 is_ordered_placeholder = tf.placeholder(tf.bool, [None])
+is_4_placeholder = tf.placeholder(tf.bool, [None])
+is_3_placeholder = tf.placeholder(tf.bool, [None])
 weight_placeholder = tf.placeholder(tf.float32, [None])
 seq_length_placeholder = tf.placeholder(tf.int32, [None])
 gather_index_placeholder = tf.placeholder(tf.int32, [None, 2])
@@ -234,10 +242,54 @@ prediction_softmax = tf.nn.softmax(prediction)
 raw_prob = tf.math.multiply(prediction_softmax, num_option_mask_placeholder)
 prob_row_sum = tf.reduce_sum(raw_prob, axis=1)
 prob = tf.div(raw_prob, tf.reshape(prob_row_sum, (-1, 1)))
-
 loss_mse = tf.math.reduce_sum(tf.math.squared_difference(target_placeholder, prob), axis=1)
 
-loss_combined = loss_mse
+prob_1 = tf.stack([tf.reduce_sum(tf.gather(prob, [0], axis=1), axis=1), tf.reduce_sum(tf.gather(prob, [1, 2, 3, 4], axis=1), axis=1)], axis=1)
+true_1 = tf.stack([tf.reduce_sum(tf.gather(target_placeholder, [0], axis=1), axis=1), tf.reduce_sum(tf.gather(target_placeholder, [1, 2, 3, 4], axis=1), axis=1)], axis=1)
+loss_1 = tf.math.reduce_sum(tf.math.squared_difference(prob_1, true_1), axis=1)
+
+prob_2 = tf.stack([tf.reduce_sum(tf.gather(prob, [0, 1], axis=1), axis=1), tf.reduce_sum(tf.gather(prob, [2, 3, 4], axis=1), axis=1)], axis=1)
+true_2 = tf.stack([tf.reduce_sum(tf.gather(target_placeholder, [0, 1], axis=1), axis=1), tf.reduce_sum(tf.gather(target_placeholder, [2, 3, 4], axis=1), axis=1)], axis=1)
+loss_2 = tf.math.reduce_sum(tf.math.squared_difference(prob_2, true_2), axis=1)
+
+prob_3 = tf.stack([tf.reduce_sum(tf.gather(prob, [0, 1, 2], axis=1), axis=1), tf.reduce_sum(tf.gather(prob, [3, 4], axis=1), axis=1)], axis=1)
+true_3 = tf.stack([tf.reduce_sum(tf.gather(target_placeholder, [0, 1, 2], axis=1), axis=1), tf.reduce_sum(tf.gather(target_placeholder, [3, 4], axis=1), axis=1)], axis=1)
+loss_3 = tf.math.reduce_sum(tf.math.squared_difference(prob_3, true_3), axis=1)
+
+prob_4 = tf.stack([tf.reduce_sum(tf.gather(prob, [0, 1, 2, 3], axis=1), axis=1), tf.reduce_sum(tf.gather(prob, [4], axis=1), axis=1)], axis=1)
+true_4 = tf.stack([tf.reduce_sum(tf.gather(target_placeholder, [0, 1, 2, 3], axis=1), axis=1), tf.reduce_sum(tf.gather(target_placeholder, [4], axis=1), axis=1)], axis=1)
+loss_4 = tf.math.reduce_sum(tf.math.squared_difference(prob_4, true_4), axis=1)
+
+loss_brier = tf.math.reduce_mean(tf.stack([loss_1, loss_2, loss_3, loss_4], axis=1), axis=1)
+
+
+prob_4_1 = tf.stack([tf.reduce_sum(tf.gather(prob, [0], axis=1), axis=1), tf.reduce_sum(tf.gather(prob, [1, 2, 3], axis=1), axis=1)], axis=1)
+true_4_1 = tf.stack([tf.reduce_sum(tf.gather(target_placeholder, [0], axis=1), axis=1), tf.reduce_sum(tf.gather(target_placeholder, [1, 2, 3], axis=1), axis=1)], axis=1)
+loss_4_1 = tf.math.reduce_sum(tf.math.squared_difference(prob_4_1, true_4_1), axis=1)
+
+prob_4_2 = tf.stack([tf.reduce_sum(tf.gather(prob, [0, 1], axis=1), axis=1), tf.reduce_sum(tf.gather(prob, [2, 3], axis=1), axis=1)], axis=1)
+true_4_2 = tf.stack([tf.reduce_sum(tf.gather(target_placeholder, [0, 1], axis=1), axis=1), tf.reduce_sum(tf.gather(target_placeholder, [2, 3], axis=1), axis=1)], axis=1)
+loss_4_2 = tf.math.reduce_sum(tf.math.squared_difference(prob_4_2, true_4_2), axis=1)
+
+prob_4_3 = tf.stack([tf.reduce_sum(tf.gather(prob, [0, 1, 2], axis=1), axis=1), tf.reduce_sum(tf.gather(prob, [3], axis=1), axis=1)], axis=1)
+true_4_3 = tf.stack([tf.reduce_sum(tf.gather(target_placeholder, [0, 1, 2], axis=1), axis=1), tf.reduce_sum(tf.gather(target_placeholder, [3], axis=1), axis=1)], axis=1)
+loss_4_3 = tf.math.reduce_sum(tf.math.squared_difference(prob_4_3, true_4_3), axis=1)
+
+loss_brier_4 = tf.math.reduce_mean(tf.stack([loss_4_1, loss_4_2, loss_4_3], axis=1), axis=1)
+
+prob_3_1 = tf.stack([tf.reduce_sum(tf.gather(prob, [0], axis=1), axis=1), tf.reduce_sum(tf.gather(prob, [1, 2], axis=1), axis=1)], axis=1)
+true_3_1 = tf.stack([tf.reduce_sum(tf.gather(target_placeholder, [0], axis=1), axis=1), tf.reduce_sum(tf.gather(target_placeholder, [1, 2], axis=1), axis=1)], axis=1)
+loss_3_1 = tf.math.reduce_sum(tf.math.squared_difference(prob_3_1, true_3_1), axis=1)
+
+prob_3_2 = tf.stack([tf.reduce_sum(tf.gather(prob, [0, 1], axis=1), axis=1), tf.reduce_sum(tf.gather(prob, [2], axis=1), axis=1)], axis=1)
+true_3_2 = tf.stack([tf.reduce_sum(tf.gather(target_placeholder, [0, 1], axis=1), axis=1), tf.reduce_sum(tf.gather(target_placeholder, [2], axis=1), axis=1)], axis=1)
+loss_3_2 = tf.math.reduce_sum(tf.math.squared_difference(prob_3_2, true_3_2), axis=1)
+
+loss_brier_3 = tf.math.reduce_mean(tf.stack([loss_3_1, loss_3_2], axis=1), axis=1)
+
+#loss_combined = tf.where(is_ordered_placeholder, loss_brier, loss_mse)
+loss_combined = tf.where(is_ordered_placeholder, tf.where(is_4_placeholder, loss_brier_4, tf.where(is_3_placeholder, loss_brier_3, loss_brier)), loss_mse)
+
 loss_weighted = tf.losses.compute_weighted_loss(loss_combined, weight_placeholder)
 
 train_op = tf.train.AdamOptimizer(0.01).minimize(loss=loss_weighted)
@@ -251,6 +303,8 @@ with tf.Session() as sess:
 					input_placeholder: input_train,
 					target_placeholder: target_train,
 					is_ordered_placeholder: is_ordered_train,
+					is_4_placeholder: is_4_train,
+					is_3_placeholder: is_3_train,
 					weight_placeholder: weight_train,
 					seq_length_placeholder: seq_length_train,
 					gather_index_placeholder: gather_index_train,
@@ -264,6 +318,8 @@ with tf.Session() as sess:
 					input_placeholder: input_test,
 					target_placeholder: target_test,
 					is_ordered_placeholder: is_ordered_test,
+					is_4_placeholder: is_4_test,
+					is_3_placeholder: is_3_test,
 					weight_placeholder: weight_test,
 					seq_length_placeholder: seq_length_test,
 					gather_index_placeholder: gather_index_test,

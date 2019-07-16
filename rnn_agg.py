@@ -1,3 +1,13 @@
+import os
+
+# uncomment to force CPU training
+os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+
+# optimize CPU performance
+os.environ['KMP_BLOCKTIME'] = '0'
+os.environ['KMP_AFFINITY'] = 'granularity=fine,verbose,compact,1,0'
+
+
 import pandas as pd
 import pdb
 import dateutil.parser
@@ -130,11 +140,10 @@ gather_index_ary_train = []
 for i, l in enumerate(seq_length_ary_train):
 	gather_index_ary_train.append([i, l-1])
 
-pdb.set_trace()
+ifp_count = n_train
 batchX_placeholder = tf.placeholder(tf.float32, [None, max_steps, 5])
 cell = tf.nn.rnn_cell.GRUCell(N_RNN_DIM, kernel_initializer=tf.orthogonal_initializer(), bias_initializer=tf.zeros_initializer())
-cell_state = cell.zero_state(ifp_count, dtype=tf.float32)
-state_series, _ = tf.nn.dynamic_rnn(cell, batchX_placeholder)
+state_series, _ = tf.nn.dynamic_rnn(cell, batchX_placeholder, dtype=tf.float32)
 
 W1 = tf.get_variable('W1', shape=(N_RNN_DIM, 5), initializer=tf.glorot_uniform_initializer())
 b1 = tf.get_variable('b1', shape=(1, 5), initializer=tf.zeros_initializer())
@@ -143,6 +152,7 @@ needed_state_train = tf.gather_nd(state_series, gather_index_ary_train)
 prediction = tf.matmul(needed_state_train, W1) + b1
 # TODO: set additional value to 0
 num_option_mask = np.zeros((ifp_count, 5))
+num_option_ary = n_opt_ary_train
 for i, c in enumerate(num_option_ary):
 	num_option_mask[i, :c] = 1
 
@@ -152,13 +162,13 @@ num_option_mask_tensor = tf.constant(num_option_mask, dtype=tf.float32)
 prob = tf.nn.softmax(tf.math.multiply(prediction, num_option_mask_tensor))
 
 target_prob = np.zeros((ifp_count, 5))
+answer_ary = answer_ary_train
 for i, a in enumerate(answer_ary):
 	target_prob[i, a[0]] = 1
 
 batchY_placeholder = tf.placeholder(tf.float32, [ifp_count, 5])
 
 mse_loss = tf.losses.mean_squared_error(batchY_placeholder, prob)
-_current_cell_state = np.zeros((ifp_count, 32), dtype=np.float32)
 train_op = tf.train.AdamOptimizer(0.005).minimize(loss=mse_loss)
 with tf.Session() as sess:
     sess.run(tf.global_variables_initializer())
@@ -167,9 +177,8 @@ with tf.Session() as sess:
        train_loss, _train_step = sess.run(
         [mse_loss, train_op],
             feed_dict={
-                batchX_placeholder: data,
+                batchX_placeholder: data_train,
                 batchY_placeholder: target_prob,
-                cell_state: _current_cell_state,
             }
         )
        print(i, train_loss)
