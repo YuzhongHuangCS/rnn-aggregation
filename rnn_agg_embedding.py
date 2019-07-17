@@ -1,11 +1,11 @@
 import os
 
 # uncomment to force CPU training
-os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+#os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
 # optimize CPU performance
-os.environ['KMP_BLOCKTIME'] = '0'
-os.environ['KMP_AFFINITY'] = 'granularity=fine,verbose,compact,1,0'
+#os.environ['KMP_BLOCKTIME'] = '0'
+#os.environ['KMP_AFFINITY'] = 'granularity=fine,verbose,compact,1,0'
 
 import pandas as pd
 import pdb

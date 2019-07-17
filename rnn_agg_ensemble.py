@@ -1,8 +1,17 @@
+import os
+
+# uncomment to force CPU training
+#os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+
+# optimize CPU performance
+#os.environ['KMP_BLOCKTIME'] = '0'
+#os.environ['KMP_AFFINITY'] = 'granularity=fine,verbose,compact,1,0'
+
 import pandas as pd
 import pdb
 import dateutil.parser
 import numpy as np
-from collections import OrderedDict
+from collections import OrderedDict, Counter
 import pickle
 import sklearn.model_selection
 import sklearn.decomposition
@@ -13,6 +22,7 @@ import random
 import copy
 from briercompute import brier
 from datetime import datetime, timedelta
+import math
 
 def is_ordered(opt):
 	keywords = ['Less', 'Between', 'More', 'inclusive','less', 'between', 'more']
@@ -43,8 +53,8 @@ for filename in ('data/dump_questions_rcta.csv', 'data/dump_questions_rctb.csv')
 				else:
 					db_answer[ifp_id] = [answer, is_ordered(clean_options)]
 
-					start_date = dateutil.parser.parse(row['start_date']).replace(hour=0, minute=0, second=0, microsecond=0)
-					end_date = dateutil.parser.parse(row['end_date']).replace(hour=0, minute=0, second=0, microsecond=0)
+					start_date = dateutil.parser.parse(row['start_date']).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+					end_date = dateutil.parser.parse(row['end_date']).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
 
 					forecast_dates = []
 					forecast_date = start_date
@@ -63,7 +73,7 @@ df = pd.read_csv('data/human.csv')
 db = OrderedDict()
 
 for index, row in df.iterrows():
-	date = row['date']
+	date = dateutil.parser.parse(row['date']).replace(tzinfo=None)
 	user_id = row['user_id']
 	ifp_id = row['ifp_id']
 
@@ -82,12 +92,38 @@ for index, row in df.iterrows():
 
 	if ifp_id not in db:
 		db[ifp_id] = []
-	else:
-		if dateutil.parser.parse(date) < dateutil.parser.parse(db[ifp_id][-1][0]):
-			if (dateutil.parser.parse(db[ifp_id][-1][0])-dateutil.parser.parse(date)).total_seconds() > 1:
-				print('Date not in ascending order', date, db[ifp_id][-1][0])
 
 	db[ifp_id].append([date,user_id,ifp_id,num_options,option_1,option_2,option_3,option_4,option_5])
+
+machine_df = pd.read_csv('data/machine_all.csv').drop_duplicates(subset=['date', 'machine_model', 'ifp_id'], keep='last')
+for index, row in machine_df.iterrows():
+	date = dateutil.parser.parse(row['date'])
+	machine_model = row['machine_model']
+	ifp_id = row['ifp_id']
+
+	if ifp_id not in db_answer:
+		continue
+
+	if machine_model not in ('Auto ARIMA', ):
+		continue
+
+	num_options = row['num_options']
+	option_1 = row['option_1']
+	option_2 = row['option_2']
+	option_3 = row['option_3']
+	option_4 = row['option_4']
+	option_5 = row['option_5']
+
+	if num_options == 1:
+		num_options = 2
+
+	if ifp_id not in db:
+		db[ifp_id] = []
+
+	db[ifp_id].append([date,machine_model,ifp_id,num_options,option_1,option_2,option_3,option_4,option_5])
+
+for ifp_id in db:
+	db[ifp_id].sort(key=lambda x: x[0])
 
 max_steps = max([len(v) for k, v in db.items()])
 all_ifp = np.asarray(list(db.keys()))
@@ -103,11 +139,29 @@ n_train = len(ifp_train)
 n_test = len(ifp_test)
 
 N_RNN_DIM = 32
+#N_PROJ_DIM = 16
+N_EMB_DIM = 8
+
+special_symbol = {
+	'padding': 0,
+	'unknown': 1,
+	'Auto ARIMA': 2
+}
+
+id_counter = Counter()
+id_counter.update(df[df['ifp_id'].isin(ifp_train)]['user_id'])
+id2index = {
+	'Auto ARIMA': 2,
+}
+
+for index, value in enumerate(id_counter.most_common()):
+	id2index[value[0]] = index + len(special_symbol)
 
 ### TRAIN data
 n_forecast_train = sum([len(v) for k, v in db_dates.items() if k in ifp_train])
 
 input_train = np.zeros((n_train, max_steps, 5))
+id_train = np.zeros((n_train, max_steps, 1), dtype=int)
 target_train = np.zeros((n_forecast_train, 5))
 answer_train = np.zeros(n_forecast_train, dtype=int)
 is_ordered_train = np.zeros(n_forecast_train, dtype=bool)
@@ -127,9 +181,12 @@ for index, ifp in enumerate(ifp_train):
 	for i, forecast in enumerate(forecasts):
 		input_train[index, i] = forecast[-5:]
 
+		forecaster_id = id2index.get(forecast[1], 1)
+		id_train[index, i] = forecaster_id
+
 	forecast_dates = db_dates[ifp]
 	n_forecasts = len(forecast_dates)
-	activity_dates = [dateutil.parser.parse(x[0]) for x in forecasts]
+	activity_dates = [x[0] for x in forecasts]
 
 	answer, is_ordered = db_answer[ifp]
 	target_train[forecast_index:forecast_index+n_forecasts, answer] = 1
@@ -166,6 +223,7 @@ input_train[np.isnan(input_train)] = 0
 n_forecast_test = sum([len(v) for k, v in db_dates.items() if k in ifp_test])
 
 input_test = np.zeros((n_test, max_steps, 5))
+id_test = np.zeros((n_test, max_steps, 1), dtype=int)
 target_test = np.zeros((n_forecast_test, 5))
 answer_test = np.zeros(n_forecast_test, dtype=int)
 is_ordered_test = np.zeros(n_forecast_test, dtype=bool)
@@ -185,9 +243,12 @@ for index, ifp in enumerate(ifp_test):
 	for i, forecast in enumerate(forecasts):
 		input_test[index, i] = forecast[-5:]
 
+		forecaster_id = id2index.get(forecast[1], 1)
+		id_test[index, i] = forecaster_id
+
 	forecast_dates = db_dates[ifp]
 	n_forecasts = len(forecast_dates)
-	activity_dates = [dateutil.parser.parse(x[0]) for x in forecasts]
+	activity_dates = [x[0] for x in forecasts]
 
 	answer, is_ordered = db_answer[ifp]
 	target_test[forecast_index:forecast_index+n_forecasts, answer] = 1
@@ -222,6 +283,7 @@ input_test[np.isnan(input_test)] = 0
 
 # Network placeholder
 input_placeholder = tf.placeholder(tf.float32, [None, max_steps, 5])
+id_placeholder = tf.placeholder(tf.int32, [None, max_steps, 1])
 target_placeholder = tf.placeholder(tf.float32, [None, 5])
 is_ordered_placeholder = tf.placeholder(tf.bool, [None])
 is_4_placeholder = tf.placeholder(tf.bool, [None])
@@ -231,12 +293,19 @@ seq_length_placeholder = tf.placeholder(tf.int32, [None])
 gather_index_placeholder = tf.placeholder(tf.int32, [None, 2])
 num_option_mask_placeholder = tf.placeholder(tf.float32, [None, 5])
 
-cell = tf.nn.rnn_cell.GRUCell(N_RNN_DIM, kernel_initializer=tf.orthogonal_initializer(), bias_initializer=tf.zeros_initializer())
-state_series, _ = tf.nn.dynamic_rnn(cell, input_placeholder, sequence_length=seq_length_placeholder, dtype=tf.float32)
-W1 = tf.get_variable('W1', shape=(N_RNN_DIM, 5), initializer=tf.glorot_uniform_initializer())
-b1 = tf.get_variable('b1', shape=(1, 5), initializer=tf.zeros_initializer())
+id_size = len(id2index) + len(special_symbol)
+embedding = tf.get_variable('embedding', shape=(id_size, N_EMB_DIM), initializer=tf.random_uniform_initializer(-math.sqrt(3), math.sqrt(3)))
+embedded_features = tf.nn.embedding_lookup(embedding, id_placeholder)
+
+combined_input = tf.concat([input_placeholder, embedded_features[:, :, 0, :]], 2)
+#cell = tf.nn.rnn_cell.LSTMCell(N_RNN_DIM, use_peepholes=True, num_proj=N_PROJ_DIM)
+cell = tf.nn.rnn_cell.LSTMCell(N_RNN_DIM, initializer=tf.orthogonal_initializer())
+#cell = tf.nn.rnn_cell.GRUCell(N_RNN_DIM, kernel_initializer=tf.orthogonal_initializer(), bias_initializer=tf.zeros_initializer())
+state_series, _ = tf.nn.dynamic_rnn(cell, combined_input, sequence_length=seq_length_placeholder, dtype=tf.float32)
+W1 = tf.get_variable('weight1', shape=(N_RNN_DIM, 5), initializer=tf.glorot_uniform_initializer())
+b1 = tf.get_variable('bias1', shape=(1, 5), initializer=tf.zeros_initializer())
 needed_state = tf.gather_nd(state_series, gather_index_placeholder)
-prediction = tf.matmul(needed_state, W1) + b1
+prediction = tf.matmul(tf.tanh(needed_state), W1) + b1
 prediction_softmax = tf.nn.softmax(prediction)
 raw_prob = tf.math.multiply(prediction_softmax, num_option_mask_placeholder)
 prob_row_sum = tf.reduce_sum(raw_prob, axis=1)
@@ -291,8 +360,9 @@ loss_combined = tf.where(is_ordered_placeholder, tf.where(is_4_placeholder, loss
 
 loss_weighted = tf.losses.compute_weighted_loss(loss_combined, weight_placeholder)
 
+
 loss_weighted_reg = loss_weighted
-variables = [v for v in tf.trainable_variables() if 'W' in v.name]
+variables = [v for v in tf.trainable_variables() if 'bias' not in v.name]
 
 for v in variables:
 	loss_weighted_reg += 0.01 * tf.nn.l2_loss(v) + 0.01 * tf.losses.absolute_difference(v, tf.zeros(tf.shape(v)))
@@ -303,10 +373,12 @@ with tf.Session() as sess:
 
 	test_scores = []
 	for i in range(100):
+		pdb.set_trace()
 		train_loss, train_pred, _train_step = sess.run(
 			[loss_weighted, prob, train_op],
 				feed_dict={
 					input_placeholder: input_train,
+					id_placeholder: id_train,
 					target_placeholder: target_train,
 					is_ordered_placeholder: is_ordered_train,
 					is_4_placeholder: is_4_train,
@@ -322,6 +394,7 @@ with tf.Session() as sess:
 			[loss_weighted, prob],
 				feed_dict={
 					input_placeholder: input_test,
+					id_placeholder: id_test,
 					target_placeholder: target_test,
 					is_ordered_placeholder: is_ordered_test,
 					is_4_placeholder: is_4_test,
