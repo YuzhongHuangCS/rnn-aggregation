@@ -59,7 +59,7 @@ for filename in ('data/dump_questions_rcta.csv', 'data/dump_questions_rctb.csv')
 					forecast_dates = []
 					forecast_date = start_date
 					while forecast_date <= end_date:
-						forecast_dates.append(forecast_date)
+						forecast_dates.append(forecast_date.replace(hour=23, minute=59, second=59, microsecond=999))
 						forecast_date += timedelta(days=1)
 					db_dates[ifp_id] = forecast_dates
 			except ValueError as e:
@@ -71,6 +71,7 @@ df = pd.read_csv('data/human.csv')
 #pdb.set_trace()
 #np.unique(df[df['ifp_id'].isin(ifp_all)]['user_id']).shape
 db = OrderedDict()
+
 
 for index, row in df.iterrows():
 	date = dateutil.parser.parse(row['date']).replace(tzinfo=None)
@@ -104,8 +105,60 @@ for index, row in machine_df.iterrows():
 	if ifp_id not in db_answer:
 		continue
 
-	if machine_model not in ('Auto ARIMA', ):
+	if machine_model not in ('Auto ARIMA', 'M4-Meta', 'Arithmetic RW', 'DS-Holt', 'DS-Holt-damped', 'DS-RW', 'DS-SES', 'ETS', 'Geometric RW', 'M4-Comb', 'Mean', 'NNETAR', 'RW', 'RW-DRIFT', 'RW-SEAS', 'STLM-AR', 'TBATS', 'THETA'):
 		continue
+
+	if machine_model == 'M4-Meta':
+		date = date.replace(microsecond=1)
+
+	if machine_model == 'Arithmetic RW':
+		date = date.replace(microsecond=2)
+
+	if machine_model == 'DS-Holt':
+		date = date.replace(microsecond=3)
+
+	if machine_model == 'DS-Holt-damped':
+		date = date.replace(microsecond=4)
+
+	if machine_model == 'DS-RW':
+		date = date.replace(microsecond=5)
+
+	if machine_model == 'DS-SES':
+		date = date.replace(microsecond=6)
+
+	if machine_model == 'ETS':
+		date = date.replace(microsecond=7)
+
+	if machine_model == 'Geometric RW':
+		date = date.replace(microsecond=8)
+
+	if machine_model == 'M4-Comb':
+		date = date.replace(microsecond=9)
+
+	if machine_model == 'Mean':
+		date = date.replace(microsecond=10)
+
+	if machine_model == 'NNETAR':
+		date = date.replace(microsecond=11)
+
+	if machine_model == 'RW':
+		date = date.replace(microsecond=12)
+
+	if machine_model == 'RW-DRIFT':
+		date = date.replace(microsecond=13)
+
+	if machine_model == 'RW-SEAS':
+		date = date.replace(microsecond=14)
+
+	if machine_model == 'STLM-AR':
+		date = date.replace(microsecond=15)
+
+	if machine_model == 'TBATS':
+		date = date.replace(microsecond=16)
+
+	if machine_model == 'THETA':
+		date = date.replace(microsecond=17)
+
 
 	num_options = row['num_options']
 	option_1 = row['option_1']
@@ -138,21 +191,36 @@ ifp_test = folds[fold_index][1]
 n_train = len(ifp_train)
 n_test = len(ifp_test)
 
-N_RNN_DIM = 32
+N_RNN_DIM = 64
 #N_PROJ_DIM = 16
 N_EMB_DIM = 8
 
 special_symbol = {
 	'padding': 0,
 	'unknown': 1,
-	'Auto ARIMA': 2
+	'Auto ARIMA': 2,
+	'M4-Meta': 3,
+	'Arithmetic RW': 4,
+	'DS-Holt': 5,
+	'DS-Holt-damped': 6,
+	'DS-RW': 7,
+	'DS-SES': 8,
+	'ETS': 9,
+	'Geometric RW': 10,
+	'M4-Comb': 11,
+	'Mean': 12,
+	'NNETAR': 13,
+	'RW': 14,
+	'RW-DRIFT': 15,
+	'RW-SEAS': 16,
+	'STLM-AR': 17,
+	'TBATS': 18,
+	'THETA': 19,
 }
 
 id_counter = Counter()
 id_counter.update(df[df['ifp_id'].isin(ifp_train)]['user_id'])
-id2index = {
-	'Auto ARIMA': 2,
-}
+id2index = copy.deepcopy(special_symbol)
 
 for index, value in enumerate(id_counter.most_common()):
 	id2index[value[0]] = index + len(special_symbol)
@@ -198,10 +266,8 @@ for index, ifp in enumerate(ifp_train):
 	for i, forecast_date in enumerate(forecast_dates):
 		this_index = np.searchsorted(activity_dates, forecast_date)
 		# hack here! If no forecast on the first day, use the first subsequent
-		i2 = i
-		while this_index == 0:
-			this_index = np.searchsorted(activity_dates, forecast_dates[i2+1])
-			i2 += 1
+		if this_index == 0:
+			this_index = 1
 		gather_index_train[forecast_index+i, :] = [index, this_index-1]
 
 	num_options = forecasts[0][3]
@@ -260,10 +326,8 @@ for index, ifp in enumerate(ifp_test):
 	for i, forecast_date in enumerate(forecast_dates):
 		this_index = np.searchsorted(activity_dates, forecast_date)
 		# hack here! If no forecast on the first day, use the first subsequent
-		i2 = i
-		while this_index == 0:
-			this_index = np.searchsorted(activity_dates, forecast_dates[i2+1])
-			i2 += 1
+		if this_index == 0:
+			this_index = 1
 		gather_index_test[forecast_index+i, :] = [index, this_index-1]
 
 	num_options = forecasts[0][3]
@@ -280,8 +344,8 @@ for index, ifp in enumerate(ifp_test):
 	forecast_index += n_forecasts
 
 input_test[np.isnan(input_test)] = 0
-
 # Network placeholder
+is_training = tf.placeholder_with_default(False, shape=(), name='is_training')
 input_placeholder = tf.placeholder(tf.float32, [None, max_steps, 5])
 id_placeholder = tf.placeholder(tf.int32, [None, max_steps, 1])
 target_placeholder = tf.placeholder(tf.float32, [None, 5])
@@ -293,19 +357,24 @@ seq_length_placeholder = tf.placeholder(tf.int32, [None])
 gather_index_placeholder = tf.placeholder(tf.int32, [None, 2])
 num_option_mask_placeholder = tf.placeholder(tf.float32, [None, 5])
 
-id_size = len(id2index) + len(special_symbol)
-embedding = tf.get_variable('embedding', shape=(id_size, N_EMB_DIM), initializer=tf.random_uniform_initializer(-math.sqrt(3), math.sqrt(3)))
+embedding = tf.get_variable('embedding', shape=(len(id2index), N_EMB_DIM), initializer=tf.random_uniform_initializer(-math.sqrt(3), math.sqrt(3)))
 embedded_features = tf.nn.embedding_lookup(embedding, id_placeholder)
 
 combined_input = tf.concat([input_placeholder, embedded_features[:, :, 0, :]], 2)
+
+#cell = Modified_LSTMCell(N_RNN_DIM, state_is_tuple=True)
 #cell = tf.nn.rnn_cell.LSTMCell(N_RNN_DIM, use_peepholes=True, num_proj=N_PROJ_DIM)
 cell = tf.nn.rnn_cell.LSTMCell(N_RNN_DIM, initializer=tf.orthogonal_initializer())
+#cell = tf.nn.rnn_cell.GRUCell(N_RNN_DIM, kernel_initializer=tf.orthogonal_initializer())
 #cell = tf.nn.rnn_cell.GRUCell(N_RNN_DIM, kernel_initializer=tf.orthogonal_initializer(), bias_initializer=tf.zeros_initializer())
-state_series, _ = tf.nn.dynamic_rnn(cell, combined_input, sequence_length=seq_length_placeholder, dtype=tf.float32)
+keep_prob = tf.cond(is_training, lambda:tf.constant(0.9), lambda:tf.constant(1.0))
+cell_dropout = tf.contrib.rnn.DropoutWrapper(cell, input_keep_prob = keep_prob, output_keep_prob = keep_prob, state_keep_prob = keep_prob)
+
+state_series, _ = tf.nn.dynamic_rnn(cell_dropout, combined_input, sequence_length=seq_length_placeholder, dtype=tf.float32)
 W1 = tf.get_variable('weight1', shape=(N_RNN_DIM, 5), initializer=tf.glorot_uniform_initializer())
 b1 = tf.get_variable('bias1', shape=(1, 5), initializer=tf.zeros_initializer())
 needed_state = tf.gather_nd(state_series, gather_index_placeholder)
-prediction = tf.matmul(tf.tanh(needed_state), W1) + b1
+prediction = tf.matmul(tf.math.sigmoid(needed_state), W1) + b1
 prediction_softmax = tf.nn.softmax(prediction)
 raw_prob = tf.math.multiply(prediction_softmax, num_option_mask_placeholder)
 prob_row_sum = tf.reduce_sum(raw_prob, axis=1)
@@ -373,7 +442,6 @@ with tf.Session() as sess:
 
 	test_scores = []
 	for i in range(100):
-		pdb.set_trace()
 		train_loss, train_pred, _train_step = sess.run(
 			[loss_weighted, prob, train_op],
 				feed_dict={
@@ -386,7 +454,8 @@ with tf.Session() as sess:
 					weight_placeholder: weight_train,
 					seq_length_placeholder: seq_length_train,
 					gather_index_placeholder: gather_index_train,
-					num_option_mask_placeholder: num_option_mask_train
+					num_option_mask_placeholder: num_option_mask_train,
+					is_training: True
 				}
 		)
 
@@ -402,7 +471,8 @@ with tf.Session() as sess:
 					weight_placeholder: weight_test,
 					seq_length_placeholder: seq_length_test,
 					gather_index_placeholder: gather_index_test,
-					num_option_mask_placeholder: num_option_mask_test
+					num_option_mask_placeholder: num_option_mask_test,
+					is_training: False
 				}
 		)
 
