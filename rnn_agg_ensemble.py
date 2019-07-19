@@ -23,6 +23,7 @@ import copy
 from briercompute import brier
 from datetime import datetime, timedelta
 import math
+import functools
 
 def is_ordered(opt):
 	keywords = ['Less', 'Between', 'More', 'inclusive','less', 'between', 'more']
@@ -66,12 +67,60 @@ for filename in ('data/dump_questions_rcta.csv', 'data/dump_questions_rctb.csv')
 				pdb.set_trace()
 				print(e)
 
+human_feature = pd.read_csv('data/human_features.csv').drop_duplicates(subset=['date', 'ifp_id'], keep='last')
+ts_feature = pd.read_csv('data/ts_features.csv')
+n_feature = human_feature.shape[1] + ts_feature.shape[1] - 4
+
+human_dict = {}
+for index, row in human_feature.iterrows():
+	ifp_id = row['ifp_id']
+	date = row['date']
+	if ifp_id not in human_dict:
+		human_dict[ifp_id] = {}
+
+	if date in human_dict[ifp_id]:
+		pdb.set_trace()
+		print('Duplicate feature')
+	else:
+		human_dict[ifp_id][date] = row.drop(labels=['ifp_id', 'date']).values
+
+ts_dict = {}
+for index, row in ts_feature.iterrows():
+	ifp_id = row['ifp_id']
+	date = row['date']
+	if ifp_id not in ts_dict:
+		ts_dict[ifp_id] = {}
+
+	if date in ts_dict[ifp_id]:
+		pdb.set_trace()
+		print('Duplicate feature')
+	else:
+		ts_dict[ifp_id][date] = row.drop(labels=['ifp_id', 'date']).values
+
+def get_feature(ifp_id, date):
+	if ifp_id in human_dict and date in human_dict[ifp_id]:
+		hf = human_dict[ifp_id][date]
+	else:
+		hf = np.zeros(human_feature.shape[1]-2)
+
+	if ifp_id in ts_dict and date in ts_dict[ifp_id]:
+		mf = ts_dict[ifp_id][date]
+	else:
+		mf = np.zeros(ts_feature.shape[1]-2)
+
+	try:
+		cf = np.concatenate([hf, mf])
+	except ValueError as e:
+		pdb.set_trace()
+		print('OK')
+
+	return cf
+
 df = pd.read_csv('data/human.csv')
 #df.fillna(0, inplace=True)
 #pdb.set_trace()
 #np.unique(df[df['ifp_id'].isin(ifp_all)]['user_id']).shape
 db = OrderedDict()
-
 
 for index, row in df.iterrows():
 	date = dateutil.parser.parse(row['date']).replace(tzinfo=None)
@@ -94,7 +143,8 @@ for index, row in df.iterrows():
 	if ifp_id not in db:
 		db[ifp_id] = []
 
-	db[ifp_id].append([date,user_id,ifp_id,num_options,option_1,option_2,option_3,option_4,option_5])
+	cf = get_feature(ifp_id, datetime.strftime(date, "%Y-%m-%d"))
+	db[ifp_id].append([date,user_id,ifp_id,num_options,option_1,option_2,option_3,option_4,option_5] + cf.tolist())
 
 machine_df = pd.read_csv('data/machine_all.csv').drop_duplicates(subset=['date', 'machine_model', 'ifp_id'], keep='last')
 for index, row in machine_df.iterrows():
@@ -173,7 +223,8 @@ for index, row in machine_df.iterrows():
 	if ifp_id not in db:
 		db[ifp_id] = []
 
-	db[ifp_id].append([date,machine_model,ifp_id,num_options,option_1,option_2,option_3,option_4,option_5])
+	cf = get_feature(ifp_id, datetime.strftime(date, "%Y-%m-%d"))
+	db[ifp_id].append([date,machine_model,ifp_id,num_options,option_1,option_2,option_3,option_4,option_5] + cf.tolist())
 
 for ifp_id in db:
 	db[ifp_id].sort(key=lambda x: x[0])
@@ -191,8 +242,8 @@ ifp_test = folds[fold_index][1]
 n_train = len(ifp_train)
 n_test = len(ifp_test)
 
-N_RNN_DIM = 64
-#N_PROJ_DIM = 16
+N_RNN_DIM = 32
+N_PROJ_DIM = 16
 N_EMB_DIM = 8
 
 special_symbol = {
@@ -228,7 +279,7 @@ for index, value in enumerate(id_counter.most_common()):
 ### TRAIN data
 n_forecast_train = sum([len(v) for k, v in db_dates.items() if k in ifp_train])
 
-input_train = np.zeros((n_train, max_steps, 5))
+input_train = np.zeros((n_train, max_steps, 5 + n_feature))
 id_train = np.zeros((n_train, max_steps, 1), dtype=int)
 target_train = np.zeros((n_forecast_train, 5))
 answer_train = np.zeros(n_forecast_train, dtype=int)
@@ -247,7 +298,7 @@ for index, ifp in enumerate(ifp_train):
 	forecasts = db[ifp]
 
 	for i, forecast in enumerate(forecasts):
-		input_train[index, i] = forecast[-5:]
+		input_train[index, i] = forecast[4:]
 
 		forecaster_id = id2index.get(forecast[1], 1)
 		id_train[index, i] = forecaster_id
@@ -288,7 +339,7 @@ input_train[np.isnan(input_train)] = 0
 ### TEST data
 n_forecast_test = sum([len(v) for k, v in db_dates.items() if k in ifp_test])
 
-input_test = np.zeros((n_test, max_steps, 5))
+input_test = np.zeros((n_test, max_steps, 5 + n_feature))
 id_test = np.zeros((n_test, max_steps, 1), dtype=int)
 target_test = np.zeros((n_forecast_test, 5))
 answer_test = np.zeros(n_forecast_test, dtype=int)
@@ -307,7 +358,7 @@ for index, ifp in enumerate(ifp_test):
 	forecasts = db[ifp]
 
 	for i, forecast in enumerate(forecasts):
-		input_test[index, i] = forecast[-5:]
+		input_test[index, i] = forecast[4:]
 
 		forecaster_id = id2index.get(forecast[1], 1)
 		id_test[index, i] = forecaster_id
@@ -346,7 +397,7 @@ for index, ifp in enumerate(ifp_test):
 input_test[np.isnan(input_test)] = 0
 # Network placeholder
 is_training = tf.placeholder_with_default(False, shape=(), name='is_training')
-input_placeholder = tf.placeholder(tf.float32, [None, max_steps, 5])
+input_placeholder = tf.placeholder(tf.float32, [None, max_steps, 5 + n_feature])
 id_placeholder = tf.placeholder(tf.int32, [None, max_steps, 1])
 target_placeholder = tf.placeholder(tf.float32, [None, 5])
 is_ordered_placeholder = tf.placeholder(tf.bool, [None])
@@ -363,14 +414,14 @@ embedded_features = tf.nn.embedding_lookup(embedding, id_placeholder)
 combined_input = tf.concat([input_placeholder, embedded_features[:, :, 0, :]], 2)
 
 #cell = Modified_LSTMCell(N_RNN_DIM, state_is_tuple=True)
-#cell = tf.nn.rnn_cell.LSTMCell(N_RNN_DIM, use_peepholes=True, num_proj=N_PROJ_DIM)
-cell = tf.nn.rnn_cell.LSTMCell(N_RNN_DIM, initializer=tf.orthogonal_initializer())
+cell = tf.nn.rnn_cell.LSTMCell(N_RNN_DIM, use_peepholes=True)
+#cell = tf.nn.rnn_cell.LSTMCell(N_RNN_DIM, initializer=tf.orthogonal_initializer())
 #cell = tf.nn.rnn_cell.GRUCell(N_RNN_DIM, kernel_initializer=tf.orthogonal_initializer())
 #cell = tf.nn.rnn_cell.GRUCell(N_RNN_DIM, kernel_initializer=tf.orthogonal_initializer(), bias_initializer=tf.zeros_initializer())
-keep_prob = tf.cond(is_training, lambda:tf.constant(0.9), lambda:tf.constant(1.0))
-cell_dropout = tf.contrib.rnn.DropoutWrapper(cell, input_keep_prob = keep_prob, output_keep_prob = keep_prob, state_keep_prob = keep_prob)
+#keep_prob = tf.cond(is_training, lambda:tf.constant(0.9), lambda:tf.constant(1.0))
+#cell_dropout = tf.contrib.rnn.DropoutWrapper(cell, input_keep_prob = keep_prob, output_keep_prob = keep_prob, state_keep_prob = keep_prob)
 
-state_series, _ = tf.nn.dynamic_rnn(cell_dropout, combined_input, sequence_length=seq_length_placeholder, dtype=tf.float32)
+state_series, _ = tf.nn.dynamic_rnn(cell, combined_input, sequence_length=seq_length_placeholder, dtype=tf.float32)
 W1 = tf.get_variable('weight1', shape=(N_RNN_DIM, 5), initializer=tf.glorot_uniform_initializer())
 b1 = tf.get_variable('bias1', shape=(1, 5), initializer=tf.zeros_initializer())
 needed_state = tf.gather_nd(state_series, gather_index_placeholder)
