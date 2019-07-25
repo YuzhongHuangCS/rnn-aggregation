@@ -23,7 +23,6 @@ import copy
 from briercompute import brier
 from datetime import datetime, timedelta
 import math
-import functools
 
 def is_ordered(opt):
 	keywords = ['Less', 'Between', 'More', 'inclusive','less', 'between', 'more']
@@ -96,6 +95,8 @@ for index, row in ts_feature.iterrows():
 		print('Duplicate feature')
 	else:
 		ts_dict[ifp_id][date] = row.drop(labels=['ifp_id', 'date']).values
+
+#n_human_feature = next(iter(next(iter((human_dict.values()))).values()))
 
 def get_feature(ifp_id, date):
 	if ifp_id in human_dict and date in human_dict[ifp_id]:
@@ -279,7 +280,7 @@ for index, value in enumerate(id_counter.most_common()):
 ### TRAIN data
 n_forecast_train = sum([len(v) for k, v in db_dates.items() if k in ifp_train])
 
-input_train = np.zeros((n_train, max_steps, 5 + n_feature))
+input_train = np.zeros((n_train, max_steps, 6 + n_feature))
 id_train = np.zeros((n_train, max_steps, 1), dtype=int)
 target_train = np.zeros((n_forecast_train, 5))
 answer_train = np.zeros(n_forecast_train, dtype=int)
@@ -298,7 +299,7 @@ for index, ifp in enumerate(ifp_train):
 	forecasts = db[ifp]
 
 	for i, forecast in enumerate(forecasts):
-		input_train[index, i] = forecast[4:]
+		input_train[index, i] = forecast[3:]
 
 		forecaster_id = id2index.get(forecast[1], 1)
 		id_train[index, i] = forecaster_id
@@ -339,7 +340,7 @@ input_train[np.isnan(input_train)] = 0
 ### TEST data
 n_forecast_test = sum([len(v) for k, v in db_dates.items() if k in ifp_test])
 
-input_test = np.zeros((n_test, max_steps, 5 + n_feature))
+input_test = np.zeros((n_test, max_steps, 6 + n_feature))
 id_test = np.zeros((n_test, max_steps, 1), dtype=int)
 target_test = np.zeros((n_forecast_test, 5))
 answer_test = np.zeros(n_forecast_test, dtype=int)
@@ -358,7 +359,7 @@ for index, ifp in enumerate(ifp_test):
 	forecasts = db[ifp]
 
 	for i, forecast in enumerate(forecasts):
-		input_test[index, i] = forecast[4:]
+		input_test[index, i] = forecast[3:]
 
 		forecaster_id = id2index.get(forecast[1], 1)
 		id_test[index, i] = forecaster_id
@@ -397,7 +398,7 @@ for index, ifp in enumerate(ifp_test):
 input_test[np.isnan(input_test)] = 0
 # Network placeholder
 is_training = tf.placeholder_with_default(False, shape=(), name='is_training')
-input_placeholder = tf.placeholder(tf.float32, [None, max_steps, 5 + n_feature])
+input_placeholder = tf.placeholder(tf.float32, [None, max_steps, 6 + n_feature])
 id_placeholder = tf.placeholder(tf.int32, [None, max_steps, 1])
 target_placeholder = tf.placeholder(tf.float32, [None, 5])
 is_ordered_placeholder = tf.placeholder(tf.bool, [None])
@@ -479,7 +480,6 @@ loss_brier_3 = tf.math.reduce_mean(tf.stack([loss_3_1, loss_3_2], axis=1), axis=
 loss_combined = tf.where(is_ordered_placeholder, tf.where(is_4_placeholder, loss_brier_4, tf.where(is_3_placeholder, loss_brier_3, loss_brier)), loss_mse)
 
 loss_weighted = tf.losses.compute_weighted_loss(loss_combined, weight_placeholder)
-
 
 loss_weighted_reg = loss_weighted
 variables = [v for v in tf.trainable_variables() if 'bias' not in v.name]
