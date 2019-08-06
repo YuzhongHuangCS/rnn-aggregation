@@ -69,6 +69,8 @@ for filename in ('data/dump_questions_rcta.csv', 'data/dump_questions_rctb.csv',
 				pdb.set_trace()
 				print(e)
 
+n_feature = 0
+'''
 human_feature = pd.read_csv('data/human_features.csv').drop_duplicates(subset=['date', 'ifp_id'], keep='last')
 ts_feature = pd.read_csv('data/ts_features.csv')
 
@@ -123,6 +125,7 @@ def get_feature(ifp_id, date):
 		print('OK')
 
 	return cf
+'''
 
 df = pd.read_csv('data/human.csv')
 #df.fillna(0, inplace=True)
@@ -151,8 +154,8 @@ for index, row in df.iterrows():
 	if ifp_id not in db:
 		db[ifp_id] = []
 
-	cf = get_feature(ifp_id, datetime.strftime(date, "%Y-%m-%d"))
-	db[ifp_id].append([date,user_id,ifp_id,num_options,option_1,option_2,option_3,option_4,option_5] + cf.tolist())
+	#cf = get_feature(ifp_id, datetime.strftime(date, "%Y-%m-%d"))
+	db[ifp_id].append([date,user_id,ifp_id,num_options,option_1,option_2,option_3,option_4,option_5])# + cf.tolist())
 
 db_te = OrderedDict()
 df_te = pd.read_csv('data/rctb/te_forecasts.csv')
@@ -177,9 +180,10 @@ for index, row in df_te.iterrows():
 	if ifp_id not in db_te:
 		db_te[ifp_id] = []
 
-	cf = get_feature(ifp_id, datetime.strftime(date, "%Y-%m-%d"))
-	db_te[ifp_id].append([date,user_id,ifp_id,num_options,option_1,option_2,option_3,option_4,option_5] + cf.tolist())
+	#cf = get_feature(ifp_id, datetime.strftime(date, "%Y-%m-%d"))
+	db_te[ifp_id].append([date,user_id,ifp_id,num_options,option_1,option_2,option_3,option_4,option_5])# + cf.tolist())
 
+'''
 machine_df = pd.read_csv('data/machine_all.csv').drop_duplicates(subset=['date', 'machine_model', 'ifp_id'], keep='last')
 for index, row in machine_df.iterrows():
 	date = dateutil.parser.parse(row['date'])
@@ -342,6 +346,7 @@ for index, row in machine_df_te.iterrows():
 	cf = get_feature(ifp_id, datetime.strftime(date, "%Y-%m-%d"))
 	db_te[ifp_id].append([date,machine_model,ifp_id,num_options,option_1,option_2,option_3,option_4,option_5] + cf.tolist())
 
+'''
 for ifp_id in db:
 	db[ifp_id].sort(key=lambda x: x[0])
 
@@ -410,7 +415,7 @@ weight_train = np.zeros(n_forecast_train)
 seq_length_train = np.zeros(n_train, dtype=int)
 gather_index_train = np.zeros((n_forecast_train, 2), dtype=int)
 num_option_ary_train = np.zeros(n_forecast_train, dtype=int)
-num_option_mask_train = np.zeros((n_forecast_train, 5))
+num_option_mask_train = np.full((n_forecast_train, 5), -1e32)
 index_map_train = {}
 
 forecast_index = 0
@@ -448,7 +453,7 @@ for index, ifp in enumerate(ifp_train):
 			is_3_train[forecast_index:forecast_index+n_forecasts] = True
 
 	num_option_ary_train[forecast_index:forecast_index+n_forecasts] = num_options
-	num_option_mask_train[forecast_index:forecast_index+n_forecasts, :num_options] = 1
+	num_option_mask_train[forecast_index:forecast_index+n_forecasts, :num_options] = 0
 
 	index_map_train[ifp] = list(range(forecast_index, forecast_index+n_forecasts))
 	forecast_index += n_forecasts
@@ -469,7 +474,7 @@ weight_test = np.zeros(n_forecast_test)
 seq_length_test = np.zeros(n_test, dtype=int)
 gather_index_test = np.zeros((n_forecast_test, 2), dtype=int)
 num_option_ary_test = np.zeros(n_forecast_test, dtype=int)
-num_option_mask_test = np.zeros((n_forecast_test, 5))
+num_option_mask_test = np.full((n_forecast_test, 5), -1e32)
 index_map_test = {}
 
 forecast_index = 0
@@ -508,7 +513,7 @@ for index, ifp in enumerate(ifp_test):
 			is_3_test[forecast_index:forecast_index+n_forecasts] = True
 
 	num_option_ary_test[forecast_index:forecast_index+n_forecasts] = num_options
-	num_option_mask_test[forecast_index:forecast_index+n_forecasts, :num_options] = 1
+	num_option_mask_test[forecast_index:forecast_index+n_forecasts, :num_options] = 0
 
 	index_map_test[ifp] = list(range(forecast_index, forecast_index+n_forecasts))
 	forecast_index += n_forecasts
@@ -531,14 +536,14 @@ num_option_mask_placeholder = tf.placeholder(tf.float32, [None, 5])
 embedding = tf.get_variable('embedding', shape=(len(id2index), N_EMB_DIM), initializer=tf.random_uniform_initializer(-math.sqrt(3), math.sqrt(3)))
 embedded_features = tf.nn.embedding_lookup(embedding, id_placeholder)
 
-#combined_input = input_placeholder
-combined_input = tf.concat([input_placeholder, embedded_features[:, :, 0, :]], 2)
+combined_input = input_placeholder
+#combined_input = tf.concat([input_placeholder, embedded_features[:, :, 0, :]], 2)
 
 
 cell = tf.nn.rnn_cell.GRUCell(N_RNN_DIM, kernel_initializer=tf.orthogonal_initializer(), bias_initializer=tf.zeros_initializer())
-input_keep_prob = tf.cond(is_training, lambda:tf.constant(0.5), lambda:tf.constant(1.0))
-output_keep_prob = tf.cond(is_training, lambda:tf.constant(1.0), lambda:tf.constant(1.0))
-state_keep_prob = tf.cond(is_training, lambda:tf.constant(0.5), lambda:tf.constant(1.0))
+input_keep_prob = tf.cond(is_training, lambda:tf.constant(0.9), lambda:tf.constant(1.0))
+output_keep_prob = tf.cond(is_training, lambda:tf.constant(0.99), lambda:tf.constant(1.0))
+state_keep_prob = tf.cond(is_training, lambda:tf.constant(0.95), lambda:tf.constant(1.0))
 cell_dropout = tf.contrib.rnn.DropoutWrapper(cell, input_keep_prob = input_keep_prob, output_keep_prob = output_keep_prob, state_keep_prob = state_keep_prob)
 zero_state = tf.placeholder(tf.float32, [None, N_RNN_DIM])
 
@@ -548,10 +553,7 @@ W1 = tf.get_variable('weight1', shape=(N_RNN_DIM, 5), initializer=tf.glorot_unif
 b1 = tf.get_variable('bias1', shape=(1, 5), initializer=tf.zeros_initializer())
 needed_state = tf.gather_nd(state_series, gather_index_placeholder)
 prediction = tf.matmul(tf.nn.tanh(needed_state), W1) + b1
-prediction_softmax = tf.nn.softmax(prediction)
-raw_prob = tf.math.multiply(prediction_softmax, num_option_mask_placeholder)
-prob_row_sum = tf.reduce_sum(raw_prob, axis=1)
-prob = tf.div(raw_prob, tf.reshape(prob_row_sum, (-1, 1)))
+prob = tf.nn.softmax(tf.math.add(prediction, num_option_mask_placeholder))
 loss_mse = tf.math.reduce_sum(tf.math.squared_difference(target_placeholder, prob), axis=1)
 
 prob_1 = tf.stack([tf.reduce_sum(tf.gather(prob, [0], axis=1), axis=1), tf.reduce_sum(tf.gather(prob, [1, 2, 3, 4], axis=1), axis=1)], axis=1)
@@ -603,12 +605,11 @@ loss_combined = tf.where(is_ordered_placeholder, tf.where(is_4_placeholder, loss
 loss_weighted = tf.losses.compute_weighted_loss(loss_combined, weight_placeholder)
 
 loss_weighted_reg = loss_weighted
-'''
 variables = [v for v in tf.trainable_variables() if 'bias' not in v.name]
 
 for v in variables:
-	loss_weighted_reg += 0.001 * tf.nn.l2_loss(v)# + 0.01 * tf.losses.absolute_difference(v, tf.zeros(tf.shape(v)))
-'''
+	loss_weighted_reg += 0.005 * tf.nn.l2_loss(v)# + 0.001 * tf.losses.absolute_difference(v, tf.zeros(tf.shape(v)))
+
 optimizer = tf.train.AdamOptimizer(0.01)
 
 gradients, variables = zip(*optimizer.compute_gradients(loss_weighted_reg))
