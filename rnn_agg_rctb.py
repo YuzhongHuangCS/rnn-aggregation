@@ -183,7 +183,6 @@ for index, row in df_te.iterrows():
 	#cf = get_feature(ifp_id, datetime.strftime(date, "%Y-%m-%d"))
 	db_te[ifp_id].append([date,user_id,ifp_id,num_options,option_1,option_2,option_3,option_4,option_5])# + cf.tolist())
 
-'''
 machine_df = pd.read_csv('data/machine_all.csv').drop_duplicates(subset=['date', 'machine_model', 'ifp_id'], keep='last')
 for index, row in machine_df.iterrows():
 	date = dateutil.parser.parse(row['date'])
@@ -262,8 +261,8 @@ for index, row in machine_df.iterrows():
 		pdb.set_trace()
 		print("Didn't expect any ifp have human forecast but don't have machine forecast")
 
-	cf = get_feature(ifp_id, datetime.strftime(date, "%Y-%m-%d"))
-	db[ifp_id].append([date,machine_model,ifp_id,num_options,option_1,option_2,option_3,option_4,option_5] + cf.tolist())
+	#cf = get_feature(ifp_id, datetime.strftime(date, "%Y-%m-%d"))
+	db[ifp_id].append([date,machine_model,ifp_id,num_options,option_1,option_2,option_3,option_4,option_5])# + cf.tolist())
 
 machine_df_te = pd.read_csv('data/rctb/machine.csv').drop_duplicates(subset=['created_at', 'machine_model', 'hfc_id'], keep='last')
 for index, row in machine_df_te.iterrows():
@@ -343,10 +342,9 @@ for index, row in machine_df_te.iterrows():
 		pdb.set_trace()
 		print("Didn't expect any ifp have human forecast but don't have machine forecast")
 
-	cf = get_feature(ifp_id, datetime.strftime(date, "%Y-%m-%d"))
-	db_te[ifp_id].append([date,machine_model,ifp_id,num_options,option_1,option_2,option_3,option_4,option_5] + cf.tolist())
+	#cf = get_feature(ifp_id, datetime.strftime(date, "%Y-%m-%d"))
+	db_te[ifp_id].append([date,machine_model,ifp_id,num_options,option_1,option_2,option_3,option_4,option_5])# + cf.tolist())
 
-'''
 for ifp_id in db:
 	db[ifp_id].sort(key=lambda x: x[0])
 
@@ -355,17 +353,18 @@ for ifp_id in db_te:
 
 max_steps = max([len(v) for k, v in db.items()] + [len(v) for k, v in db_te.items()])
 
-#all_ifp = np.asarray(list(db.keys()))
+all_ifp = np.asarray(list(db.keys()))
 
-#kf = sklearn.model_selection.KFold(shuffle=True, n_splits=5, random_state=2019)
-#folds = [[all_ifp[f[0]], all_ifp[f[1]]] for f in kf.split(all_ifp)]
-#fold_index = 0
+kf = sklearn.model_selection.KFold(shuffle=True, n_splits=5, random_state=2019)
+folds = [[all_ifp[f[0]], all_ifp[f[1]]] for f in kf.split(all_ifp)]
+fold_index = 0
 
-ifp_train = np.asarray(list(db.keys()))
+ifp_train = folds[fold_index][0]
+ifp_valid = folds[fold_index][1]
 ifp_test = np.asarray(list(db_te.keys()))
 
-#ifp_train = all_ifp
 n_train = len(ifp_train)
+n_valid = len(ifp_valid)
 n_test = len(ifp_test)
 
 N_RNN_DIM = 32
@@ -394,12 +393,12 @@ special_symbol = {
 	'THETA': 19,
 }
 
-id_counter = Counter()
-id_counter.update(df[df['ifp_id'].isin(ifp_train)]['user_id'])
+#id_counter = Counter()
+#id_counter.update(df[df['ifp_id'].isin(ifp_train)]['user_id'])
 id2index = copy.deepcopy(special_symbol)
 
-for index, value in enumerate(id_counter.most_common()):
-	id2index[value[0]] = index + len(special_symbol)
+#for index, value in enumerate(id_counter.most_common()):
+#	id2index[value[0]] = index + len(special_symbol)
 
 ### TRAIN data
 n_forecast_train = sum([len(v) for k, v in db_dates.items() if k in ifp_train])
@@ -459,6 +458,65 @@ for index, ifp in enumerate(ifp_train):
 	forecast_index += n_forecasts
 
 input_train[np.isnan(input_train)] = 0
+
+### VALID data
+n_forecast_valid = sum([len(v) for k, v in db_dates.items() if k in ifp_valid])
+
+input_valid = np.zeros((n_valid, max_steps, 5 + n_feature))
+id_valid = np.zeros((n_valid, max_steps, 1), dtype=int)
+target_valid = np.zeros((n_forecast_valid, 5))
+answer_valid = np.zeros(n_forecast_valid, dtype=int)
+is_ordered_valid = np.zeros(n_forecast_valid, dtype=bool)
+is_4_valid = np.zeros(n_forecast_valid, dtype=bool)
+is_3_valid = np.zeros(n_forecast_valid, dtype=bool)
+weight_valid = np.zeros(n_forecast_valid)
+seq_length_valid = np.zeros(n_valid, dtype=int)
+gather_index_valid = np.zeros((n_forecast_valid, 2), dtype=int)
+num_option_ary_valid = np.zeros(n_forecast_valid, dtype=int)
+num_option_mask_valid = np.full((n_forecast_valid, 5), -1e32)
+index_map_valid = {}
+
+forecast_index = 0
+for index, ifp in enumerate(ifp_valid):
+	forecasts = db[ifp]
+
+	for i, forecast in enumerate(forecasts):
+		input_valid[index, i] = forecast[4:]
+		forecaster_id = id2index.get(forecast[1], 1)
+		id_valid[index, i] = forecaster_id
+
+	forecast_dates = db_dates[ifp]
+	n_forecasts = len(forecast_dates)
+	activity_dates = [x[0] for x in forecasts]
+
+	answer, is_ordered = db_answer[ifp]
+	target_valid[forecast_index:forecast_index+n_forecasts, answer] = 1
+	answer_valid[forecast_index:forecast_index+n_forecasts] = answer
+	is_ordered_valid[forecast_index:forecast_index+n_forecasts] = is_ordered
+	weight_valid[forecast_index:forecast_index+n_forecasts] = ((1.0 / n_forecasts) / n_valid) * n_forecast_valid
+	seq_length_valid[index] = len(forecasts)
+
+	for i, forecast_date in enumerate(forecast_dates):
+		this_index = np.searchsorted(activity_dates, forecast_date)
+		# hack here! If no forecast on the first day, use the first subsequent
+		if this_index == 0:
+			this_index = 1
+		gather_index_valid[forecast_index+i, :] = [index, this_index-1]
+
+	num_options = forecasts[0][3]
+	if num_options == 4:
+		is_4_valid[forecast_index:forecast_index+n_forecasts] = True
+	else:
+		if num_options == 3:
+			is_3_valid[forecast_index:forecast_index+n_forecasts] = True
+
+	num_option_ary_valid[forecast_index:forecast_index+n_forecasts] = num_options
+	num_option_mask_valid[forecast_index:forecast_index+n_forecasts, :num_options] = 0
+
+	index_map_valid[ifp] = list(range(forecast_index, forecast_index+n_forecasts))
+	forecast_index += n_forecasts
+
+input_valid[np.isnan(input_valid)] = 0
 
 ### TEST data
 n_forecast_test = sum([len(v) for k, v in db_dates.items() if k in ifp_test])
@@ -536,13 +594,12 @@ num_option_mask_placeholder = tf.placeholder(tf.float32, [None, 5])
 embedding = tf.get_variable('embedding', shape=(len(id2index), N_EMB_DIM), initializer=tf.random_uniform_initializer(-math.sqrt(3), math.sqrt(3)))
 embedded_features = tf.nn.embedding_lookup(embedding, id_placeholder)
 
-combined_input = input_placeholder
-#combined_input = tf.concat([input_placeholder, embedded_features[:, :, 0, :]], 2)
-
+#combined_input = input_placeholder
+combined_input = tf.concat([input_placeholder, embedded_features[:, :, 0, :]], 2)
 
 cell = tf.nn.rnn_cell.GRUCell(N_RNN_DIM, kernel_initializer=tf.orthogonal_initializer(), bias_initializer=tf.zeros_initializer())
-input_keep_prob = tf.cond(is_training, lambda:tf.constant(0.9), lambda:tf.constant(1.0))
-output_keep_prob = tf.cond(is_training, lambda:tf.constant(0.99), lambda:tf.constant(1.0))
+input_keep_prob = tf.cond(is_training, lambda:tf.constant(0.95), lambda:tf.constant(1.0))
+output_keep_prob = tf.cond(is_training, lambda:tf.constant(0.95), lambda:tf.constant(1.0))
 state_keep_prob = tf.cond(is_training, lambda:tf.constant(0.95), lambda:tf.constant(1.0))
 cell_dropout = tf.contrib.rnn.DropoutWrapper(cell, input_keep_prob = input_keep_prob, output_keep_prob = output_keep_prob, state_keep_prob = state_keep_prob)
 zero_state = tf.placeholder(tf.float32, [None, N_RNN_DIM])
@@ -608,9 +665,11 @@ loss_weighted_reg = loss_weighted
 variables = [v for v in tf.trainable_variables() if 'bias' not in v.name]
 
 for v in variables:
-	loss_weighted_reg += 0.005 * tf.nn.l2_loss(v)# + 0.001 * tf.losses.absolute_difference(v, tf.zeros(tf.shape(v)))
+	loss_weighted_reg += 1e-4 * tf.nn.l2_loss(v)# + 0.001 * tf.losses.absolute_difference(v, tf.zeros(tf.shape(v)))
 
-optimizer = tf.train.AdamOptimizer(0.01)
+lr = tf.Variable(0.01, trainable=False)
+lr_decay_op = lr.assign(lr * 0.95)
+optimizer = tf.train.AdamOptimizer(lr)
 
 gradients, variables = zip(*optimizer.compute_gradients(loss_weighted_reg))
 gradients, _ = tf.clip_by_global_norm(gradients, 5.0)
@@ -620,19 +679,31 @@ with tf.Session() as sess:
 	sess.run(tf.global_variables_initializer())
 
 	#pdb.set_trace()
-	test_scores = []
+	valid_scores = []
 	train_zero_state = np.zeros((n_train, N_RNN_DIM), dtype=np.float32)
+	valid_zero_state = np.zeros((n_valid, N_RNN_DIM), dtype=np.float32)
 	test_zero_state = np.zeros((n_test, N_RNN_DIM), dtype=np.float32)
 
-	for i in range(100):
-		'''
-		if i % 2 == 0:
-			use_dropout = True
-		else:
-			use_dropout = False
+	smallest_loss = float('inf')
+	wait = 0
+	#n_patience = 20
+	n_lr_decay = 5
+	n_reset_weight = 20
+	smallest_weight = None
 
-		pdb.set_trace()
-		'''
+	def _save_weight():
+		global smallest_weight
+		tf_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES)
+		smallest_weight = sess.run(tf_vars)
+
+	def _load_weights():
+		tf_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES)
+		ops = []
+		for i_tf in range(len(tf_vars)):
+			ops.append(tf.assign(tf_vars[i_tf], smallest_weight[i_tf]))
+		sess.run(ops)
+
+	for i in range(100):
 		train_loss, train_pred, _train_step = sess.run(
 			[loss_weighted, prob, train_op],
 				feed_dict={
@@ -648,6 +719,24 @@ with tf.Session() as sess:
 					num_option_mask_placeholder: num_option_mask_train,
 					zero_state: train_zero_state,
 					is_training: True
+				}
+		)
+
+		valid_loss, valid_pred = sess.run(
+			[loss_weighted, prob],
+				feed_dict={
+					input_placeholder: input_valid,
+					id_placeholder: id_valid,
+					target_placeholder: target_valid,
+					is_ordered_placeholder: is_ordered_valid,
+					is_4_placeholder: is_4_valid,
+					is_3_placeholder: is_3_valid,
+					weight_placeholder: weight_valid,
+					seq_length_placeholder: seq_length_valid,
+					gather_index_placeholder: gather_index_valid,
+					num_option_mask_placeholder: num_option_mask_valid,
+					zero_state: valid_zero_state,
+					is_training: False
 				}
 		)
 
@@ -669,11 +758,30 @@ with tf.Session() as sess:
 				}
 		)
 
-		test_scores.append(test_loss)
-		print(i, train_loss, test_loss, np.min(test_scores))
+		valid_scores.append(valid_loss)
+		print('Epoch: {}, train loss: {}, valid loss: {}, min valid loss so far: {}, test loss: {}'.format(i, train_loss, valid_loss, np.min(valid_scores), test_loss))
 
+		if valid_loss < smallest_loss:
+			smallest_loss = valid_loss
+			_save_weight()
+			wait = 0
+			print('New smallest')
+		else:
+			wait += 1
+			print('Wait {}'.format(wait))
+			if wait % n_lr_decay == 0:
+				sess.run(lr_decay_op)
+				print('Apply lr decay, new lr: %f' % lr.eval())
+
+			if wait % n_reset_weight == 0:
+				_load_weights()
+				wait = 0
+				print('Reset weights')
+
+		# for verification purpose only
 		if i == 0:
 			train_briers = np.asarray([brier(p[:num_option_ary_train[i]], answer_train[i], is_ordered_train[i]) for i, p in enumerate(train_pred)])
+			valid_briers = np.asarray([brier(p[:num_option_ary_valid[i]], answer_valid[i], is_ordered_valid[i]) for i, p in enumerate(valid_pred)])
 			test_briers = np.asarray([brier(p[:num_option_ary_test[i]], answer_test[i], is_ordered_test[i]) for i, p in enumerate(test_pred)])
 
 			db_brier_train = {}
@@ -682,14 +790,41 @@ with tf.Session() as sess:
 				scores = train_briers[index]
 				db_brier_train[ifp] = np.mean(scores)
 
+			db_brier_valid = {}
+			for ifp in ifp_valid:
+				index = index_map_valid[ifp]
+				scores = valid_briers[index]
+				db_brier_valid[ifp] = np.mean(scores)
+
 			db_brier_test = {}
 			for ifp in ifp_test:
 				index = index_map_test[ifp]
 				scores = test_briers[index]
 				db_brier_test[ifp] = np.mean(scores)
 
-			print(i, train_loss, test_loss, np.mean(list(db_brier_train.values())), np.mean(list(db_brier_test.values())))
+			print(i, train_loss, valid_loss, test_loss, np.mean(list(db_brier_train.values())), np.mean(list(db_brier_valid.values())), np.mean(list(db_brier_test.values())))
 
+	_load_weights()
+	print('min valid loss', np.min(valid_scores))
+	test_loss, test_pred = sess.run(
+		[loss_weighted, prob],
+			feed_dict={
+				input_placeholder: input_test,
+				id_placeholder: id_test,
+				target_placeholder: target_test,
+				is_ordered_placeholder: is_ordered_test,
+				is_4_placeholder: is_4_test,
+				is_3_placeholder: is_3_test,
+				weight_placeholder: weight_test,
+				seq_length_placeholder: seq_length_test,
+				gather_index_placeholder: gather_index_test,
+				num_option_mask_placeholder: num_option_mask_test,
+				zero_state: test_zero_state,
+				is_training: False
+			}
+	)
+	print('test loss', test_loss)
 	pdb.set_trace()
-	print('min test loss', np.min(test_scores))
+	print('Before exit')
+
 print('OK')
