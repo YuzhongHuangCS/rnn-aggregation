@@ -7,6 +7,7 @@ os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 os.environ['KMP_BLOCKTIME'] = '0'
 os.environ['KMP_AFFINITY'] = 'granularity=fine,verbose,compact,1,0'
 
+import sys
 import pandas as pd
 import pdb
 import dateutil.parser
@@ -27,6 +28,11 @@ import math
 N_RNN_DIM = 32
 N_EMB_DIM = 8
 
+human_feature_used = sys.argv[1]
+fold_index_used = int(sys.argv[2])
+print('human_feature_used: {}'.format(human_feature_used))
+print('fold_index_used: {}'.format(fold_index_used))
+
 def is_ordered(opt):
 	keywords = ['Less', 'Between', 'More', 'inclusive','less', 'between', 'more']
 	if len(opt) <= 2: #binary
@@ -37,7 +43,7 @@ def is_ordered(opt):
 
 	return False
 
-if True or not os.path.exists('cache.ckpt'):
+if True:# or not os.path.exists('cache.ckpt'):
 	print('Reading data')
 	db_answer = {}
 	db_dates = {}
@@ -72,16 +78,30 @@ if True or not os.path.exists('cache.ckpt'):
 					print(e)
 
 
-	human_feature = pd.read_csv('data/human_features.csv').drop_duplicates(subset=['date', 'ifp_id'], keep='last').drop(columns=[
-		'Macroeconomics/Finance','Natural Sciences/Climate', 'Other', 'Politics/Intl Relations', 'Technology', 'entropy_b',
+
+	human_feature = pd.read_csv('data/human_features.csv').drop_duplicates(subset=['date', 'ifp_id'], keep='last')
+	hf_cols = human_feature.columns.tolist()
+	hf_cols.remove(human_feature_used)
+	hf_cols.remove('ifp_id')
+	hf_cols.remove('date')
+	hf_cols.remove('stage')
+	hf_cols.remove('p_updates')
+	hf_cols.remove('Health/Disease')
+	human_feature = human_feature.drop(columns=hf_cols)
+	print(human_feature.columns)
+	#hf_cols = human_feature.columns
+	#.drop(columns=[human_feature_used])
+	'''
+		#'Macroeconomics/Finance',
+		'Health/Disease',  'Natural Sciences/Climate',
+		'Other', 'Politics/Intl Relations', 'Technology', 'entropy_b',
 		'entropy_c', 'entropy_d', 'entropy_human', 'entropy_sage', 'entropy_te',
 		'n_forecasts', 'n_forecasts_b', 'n_forecasts_c',
 		'n_forecasts_d', 'n_forecasts_sage', 'n_forecasts_te', 'ordinal',
-		'variance_b', 'variance_c', 'variance_d',
+		'p_updates', 'stage', 'variance_b', 'variance_c', 'variance_d',
 		'variance_human', 'variance_sage', 'variance_te'])
 
-	ts_feature = pd.read_csv('data/ts_features.csv').drop(
-		columns=['x_acf1', 'x_acf10', 'diff1_acf1', 'diff1_acf10',
+	ts_feature = pd.read_csv('data/ts_features.csv').drop(columns=['x_acf1', 'x_acf10', 'diff1_acf1', 'diff1_acf10',
 		'diff2_acf1', 'diff2_acf10', 'seas_acf1', 'ARCH.LM', 'crossing_points',
 		'entropy', 'flat_spots', 'arch_acf', 'garch_acf', 'arch_r2', 'garch_r2',
 		'alpha', 'beta', 'hurst', 'lumpiness', 'nonlinearity', 'x_pacf5',
@@ -89,11 +109,12 @@ if True or not os.path.exists('cache.ckpt'):
 		'seasonal_period', 'trend', 'spike', 'linearity', 'curvature', 'e_acf1',
 		'e_acf10', 'seasonal_strength', 'peak', 'trough', 'stability',
 		'hw_alpha', 'hw_beta', 'hw_gamma', 'unitroot_kpss', 'unitroot_pp',
-		'series_length'
-	])
-
-	n_feature = human_feature.shape[1] + ts_feature.shape[1] - 4
-	n_feature = 0
+		'series_length', 'skew'
+		#'ratio',
+		])
+	'''
+	#n_feature = human_feature.shape[1] + ts_feature.shape[1] - 4
+	n_feature = human_feature.shape[1] - 2
 
 	human_dict = {}
 	for index, row in human_feature.iterrows():
@@ -108,6 +129,7 @@ if True or not os.path.exists('cache.ckpt'):
 		else:
 			human_dict[ifp_id][date] = row.drop(labels=['ifp_id', 'date']).values
 
+	'''
 	ts_dict = {}
 	for index, row in ts_feature.iterrows():
 		ifp_id = row['ifp_id']
@@ -120,13 +142,14 @@ if True or not os.path.exists('cache.ckpt'):
 			print('Duplicate feature')
 		else:
 			ts_dict[ifp_id][date] = row.drop(labels=['ifp_id', 'date']).values
-
+	'''
 	def get_feature(ifp_id, date):
 		if ifp_id in human_dict and date in human_dict[ifp_id]:
 			hf = human_dict[ifp_id][date]
 		else:
 			hf = np.zeros(human_feature.shape[1]-2)
 
+		'''
 		if ifp_id in ts_dict and date in ts_dict[ifp_id]:
 			mf = ts_dict[ifp_id][date]
 		else:
@@ -139,7 +162,8 @@ if True or not os.path.exists('cache.ckpt'):
 			print('OK')
 
 		return cf
-
+		'''
+		return hf
 
 	df = pd.read_csv('data/human.csv')
 	#df.fillna(0, inplace=True)
@@ -168,8 +192,8 @@ if True or not os.path.exists('cache.ckpt'):
 		if ifp_id not in db:
 			db[ifp_id] = []
 
-		#cf = get_feature(ifp_id, datetime.strftime(date, "%Y-%m-%d"))
-		db[ifp_id].append([date,user_id,ifp_id,num_options,option_1,option_2,option_3,option_4,option_5])# + cf.tolist())
+		cf = get_feature(ifp_id, datetime.strftime(date, "%Y-%m-%d"))
+		db[ifp_id].append([date,user_id,ifp_id,num_options,option_1,option_2,option_3,option_4,option_5] + cf.tolist())
 
 	machine_df = pd.read_csv('data/machine_all.csv').drop_duplicates(subset=['date', 'machine_model', 'ifp_id'], keep='last')
 	for index, row in machine_df.iterrows():
@@ -249,8 +273,8 @@ if True or not os.path.exists('cache.ckpt'):
 			pdb.set_trace()
 			print("Didn't expect any ifp have human forecast but don't have machine forecast")
 
-		#cf = get_feature(ifp_id, datetime.strftime(date, "%Y-%m-%d"))
-		db[ifp_id].append([date,machine_model,ifp_id,num_options,option_1,option_2,option_3,option_4,option_5])# + cf.tolist())
+		cf = get_feature(ifp_id, datetime.strftime(date, "%Y-%m-%d"))
+		db[ifp_id].append([date,machine_model,ifp_id,num_options,option_1,option_2,option_3,option_4,option_5] + cf.tolist())
 
 	for ifp_id in db:
 		db[ifp_id].sort(key=lambda x: x[0])
@@ -260,7 +284,7 @@ if True or not os.path.exists('cache.ckpt'):
 
 	kf = sklearn.model_selection.KFold(shuffle=True, n_splits=5, random_state=2019)
 	folds = [[all_ifp[f[0]], all_ifp[f[1]]] for f in kf.split(all_ifp)]
-	fold_index = 0
+	fold_index = fold_index_used
 
 	ifp_train = folds[fold_index][0]
 	ifp_test = folds[fold_index][1]
@@ -418,18 +442,23 @@ if True or not os.path.exists('cache.ckpt'):
 
 	input_test[np.isnan(input_test)] = 0
 
+	'''
 	with open('cache.ckpt', 'wb') as fout:
 		pickle.dump([
 			max_steps, n_feature,id2index,ifp_train,ifp_test,n_train,n_test,
 			input_train, id_train, target_train, answer_train, is_ordered_train, is_4_train, is_3_train, weight_train, seq_length_train, gather_index_train, num_option_mask_train, num_option_ary_train,index_map_train,
 			input_test, id_test, target_test, answer_test, is_ordered_test, is_4_test, is_3_test, weight_test, seq_length_test, gather_index_test, num_option_mask_test, num_option_ary_test,index_map_test,
 		], fout, pickle.HIGHEST_PROTOCOL)
+	'''
 else:
+	pass
+	'''
 	with open('cache.ckpt', 'rb') as fin:
 		[max_steps, n_feature,id2index,ifp_train,ifp_test,n_train,n_test,
 		input_train, id_train, target_train, answer_train, is_ordered_train, is_4_train, is_3_train, weight_train, seq_length_train, gather_index_train, num_option_mask_train, num_option_ary_train,index_map_train,
 		input_test, id_test, target_test, answer_test, is_ordered_test, is_4_test, is_3_test, weight_test, seq_length_test, gather_index_test, num_option_mask_test, num_option_ary_test,index_map_test,
 		] = pickle.load(fin)
+	'''
 
 # Network placeholder
 is_training = tf.placeholder_with_default(False, shape=(), name='is_training')
@@ -530,7 +559,10 @@ gradients, _ = tf.clip_by_global_norm(gradients, 5.0)
 train_op = optimizer.apply_gradients(zip(gradients, variables))
 
 saver = tf.train.Saver()
-save_path = 'model/1/model.ckpt'
+save_dir = 'model/{}/{}'.format(human_feature_used.replace('/', '_').replace(' ', '_'), fold_index)
+os.makedirs(save_dir, exist_ok=True)
+save_path = save_dir + '/model.ckpt'
+
 with tf.Session() as sess:
 	sess.run(tf.global_variables_initializer())
 
