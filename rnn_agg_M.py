@@ -255,10 +255,14 @@ else:
 def M0(data, day,
 		n_most_recent=0.3, # temporal subset
 		n_minimum = 10, # the MIN forecasts to keep, this supercedes n_most_recent 
+		only_human = False,
 		):
 
+	
 	# Step 1:Temporal subsetting
 	predinput = [x for x in data if x[0]<=day]
+	if only_human:
+		predinput = [x for x in predinput if x[1]=='human']
 	predinput = sorted([i for i in predinput], key=lambda x: x[0], reverse=True)
 	peoplewhoparticipated = set([x[2] for x in predinput])
 	forecasts = [] #last forecast of each person
@@ -279,7 +283,8 @@ def M0(data, day,
 	date = forecasts[ntokeep][0]
 	# date = datetime.combine(date, time.min)
 	# print("Getting forecasts produced on date %s or later ..." % date) 
-	forecasts = [i for i in forecasts if i[0]>=date]
+	forecasts = [x for x in forecasts if x[0]>=date]
+
 
 
 	# Step 2:Aggregate forecasts
