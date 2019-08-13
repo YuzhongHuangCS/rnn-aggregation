@@ -302,9 +302,10 @@ def M1(data, day, ordered,
 		min_activity = 10, # min # of resolved forecasts answered to update accuracy score
 		n_most_recent=0.2, # temporal subset
 		n_minimum = 10, # the MIN forecasts to keep, this supercedes n_most_recent 
-		only_human = False,
+		only_human = False, # only use human forecasts
+		only_arima = False, #use only arima as machine models
 		gamma=2., #accuracy/brier exponent
-		alpha=1., # the group level extremizing parameter,
+		alpha=1.3, # the group level extremizing parameter,
 		):
 
 	
@@ -312,6 +313,8 @@ def M1(data, day, ordered,
 	predinput = [x for x in data if x[0]<=day]
 	if only_human:
 		predinput = [x for x in predinput if x[1]=='human']
+	if only_arima:
+		predinput = [x for x in predinput if (x[1]=='human') or (x[2]=='Auto ARIMA' )]
 	predinput = sorted([i for i in predinput], key=lambda x: x[0], reverse=True)
 	peoplewhoparticipated = set([x[2] for x in predinput])
 	forecasts = [] #last forecast of each person
@@ -368,7 +371,10 @@ def M0_aggregation(test_input, db_dates,db_answer):
 	for ifp in ifps:
 		results[ifp] = []
 		for day in db_dates[ifp]:
-			pred = M1(test_input[ifp], day)
+			pred = M1(test_input[ifp], day, 
+				ordered= db_answer[ifp][1],
+				alpha=1.
+				)
 			if len(pred)>0:
 				score =  brier(pred, db_answer[ifp][0], ordered=db_answer[ifp][1])
 				results[ifp].append(score)
@@ -380,7 +386,7 @@ def M0_aggregation(test_input, db_dates,db_answer):
 
 	return scores
 
-def M1_aggregation(train_input,test_input, db_dates,db_answer):
+def M2_aggregation(train_input,test_input, db_dates,db_answer):
 	
 	brier_score, question2user2brier = get_user_brier(train_input,db_dates,db_answer)
 	user_activity = {user: len(ifps) for user, ifps in question2user2brier.items()}
@@ -415,28 +421,32 @@ all_ifp = np.asarray(list(db.keys()))
 
 kf = sklearn.model_selection.KFold(shuffle=True, n_splits=5, random_state=2019)
 folds = [[all_ifp[f[0]], all_ifp[f[1]]] for f in kf.split(all_ifp)]
-fold_index = 0
 
-ifp_train = folds[fold_index][0]
-ifp_test = folds[fold_index][1]
+for i in range(5):
+	fold_index = i
 
-#ifp_train = all_ifp
-n_train = len(ifp_train)
-n_test = len(ifp_test)
+	ifp_train = folds[fold_index][0]
 
-train_input = {k: db[k] for k in ifp_train}
-test_input = {k: db[k] for k in ifp_test}
+	ifp_test = folds[fold_index][1]
+
+	#ifp_train = all_ifp
+	n_train = len(ifp_train)
+	n_test = len(ifp_test)
+
+	train_input = {k: db[k] for k in ifp_train}
+	test_input = {k: db[k] for k in ifp_test}
 
 
 
-#Brier scores for each ifp
-# results = M0_aggregation(test_input, db_dates,db_answer)
-# #Mean Brier
-# print(np.array(list(results.values())).mean())
+	#Brier scores for each ifp
+	results = M0_aggregation(test_input, db_dates,db_answer)
 
-results = M1_aggregation(train_input,test_input, db_dates,db_answer)
-#Mean Brier
-print(np.array(list(results.values())).mean())
+	#Mean Brier of M0
+	print('M0 = ', np.array(list(results.values())).mean())
+
+	results = M2_aggregation(train_input,test_input, db_dates,db_answer)
+	#Mean Brier of M2
+	print('M2 = ', np.array(list(results.values())).mean())
 
 
 print('OK')
