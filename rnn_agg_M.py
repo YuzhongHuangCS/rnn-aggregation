@@ -11,7 +11,7 @@ import pandas as pd
 import pdb
 import dateutil.parser
 import numpy as np
-from collections import OrderedDict, Counter
+from collections import OrderedDict, Counter,defaultdict
 import pickle
 import sklearn.model_selection
 import sklearn.decomposition
@@ -20,7 +20,7 @@ import scipy.stats
 # import tensorflow as tf
 import random
 import copy
-from briercompute import brier
+from briercompute import brier, get_user_brier
 from datetime import datetime, timedelta
 import math
 
@@ -251,11 +251,60 @@ else:
 		[db, db_answer, db_dates,
 		] = pickle.load(fin)
 
-# db[ifp_id].append([date,'human',user_id,ifp_id,num_options,option_1,option_2,option_3,option_4,option_5])
-def M0(data, day,
-		n_most_recent=0.3, # temporal subset
+
+# transforms range
+def transform_range(d,ini,fin):
+  mi = d[min(d, key=d.get)]
+  ma = d[max(d, key=d.get)]
+  s=1.
+  if (ma - mi)>0:
+    s = (fin - ini)/(ma - mi)
+  r = {}
+  for key, value in d.items():
+    r[key] = 1.1 - (value-mi)*s + ini
+  return r
+
+
+
+
+def extremize(probs, alpha, ordered):
+	c = len(probs)
+	cum_ext = []
+	if ordered:
+		cum_sum = 0.
+		for prob in probs:
+			p = prob + cum_sum
+			if p>1.: #had problems with p=1.00000002
+				p=1.0
+			cum_ext.append(((c-1.)*p)**alpha/( ((c-1.)*p)**alpha + (c-1.)*(1.-p)**alpha ))
+			cum_sum += prob
+		last = 0.
+
+		for opt, prob in enumerate(cum_ext):
+			cum_ext[opt] = cum_ext[opt] - last
+			last = prob
+	else:
+		for prob in probs:
+			#Non-Ordered IFPs:
+			cum_ext.append(((c-1.)*prob)**alpha/( ((c-1.)*prob)**alpha + (c-1.)*(1.-prob)**alpha) )
+
+	#normalize
+	norm = sum(cum_ext)
+	for opt, prob in enumerate(cum_ext):
+		cum_ext[opt] = cum_ext[opt]/ norm
+
+	return cum_ext
+
+
+def M1(data, day, ordered,
+		brier_score= defaultdict(lambda: 1.),
+		user_activity = defaultdict(lambda: 0.),
+		min_activity = 10, # min # of resolved forecasts answered to update accuracy score
+		n_most_recent=0.2, # temporal subset
 		n_minimum = 10, # the MIN forecasts to keep, this supercedes n_most_recent 
 		only_human = False,
+		gamma=2., #accuracy/brier exponent
+		alpha=1., # the group level extremizing parameter,
 		):
 
 	
@@ -285,20 +334,27 @@ def M0(data, day,
 	# print("Getting forecasts produced on date %s or later ..." % date) 
 	forecasts = [x for x in forecasts if x[0]>=date]
 
-
-
 	# Step 2:Aggregate forecasts
 	result =  np.zeros(5)
 	for f in forecasts:
 		user = f[2]
 		num_options = f[4] 
 		pred = np.array(f[5:])
-		w = 1.0 #uniform weights
-		result += w*pred
+		if user_activity[user]>=min_activity:
+			w = brier_score[user]
+		else:
+			w = 0.5
+		#weighted pred
+		# print(brier_score[user])
+		# print(w)
+		result += (w**gamma)*pred
 
 	# Step 3:Normalize
 	result = result[:num_options]
 	result /= np.nansum(result)
+
+	#Step 4:Aggregate-level extremization and weighting 
+	result = extremize(result, alpha, ordered)
 
 
 
@@ -312,7 +368,7 @@ def M0_aggregation(test_input, db_dates,db_answer):
 	for ifp in ifps:
 		results[ifp] = []
 		for day in db_dates[ifp]:
-			pred = M0(test_input[ifp], day)
+			pred = M1(test_input[ifp], day)
 			if len(pred)>0:
 				score =  brier(pred, db_answer[ifp][0], ordered=db_answer[ifp][1])
 				results[ifp].append(score)
@@ -324,9 +380,35 @@ def M0_aggregation(test_input, db_dates,db_answer):
 
 	return scores
 
+def M1_aggregation(train_input,test_input, db_dates,db_answer):
+	
+	brier_score, question2user2brier = get_user_brier(train_input,db_dates,db_answer)
+	user_activity = {user: len(ifps) for user, ifps in question2user2brier.items()}
+	user_activity = defaultdict(lambda: 0., brier_score)
+	brier_score = transform_range(brier_score,0.1,1.)
+	brier_score =  defaultdict(lambda: 0.5, brier_score)
 
+	ifps = test_input.keys()
+	results = {}
+	for ifp in ifps:
+		results[ifp] = []
+		for day in db_dates[ifp]:
+			pred = M1(test_input[ifp], day, 
+				ordered= db_answer[ifp][1], 
+				brier_score=brier_score,
+				user_activity = user_activity
+				)
+			if len(pred)>0:
+				score =  brier(pred, db_answer[ifp][0], ordered=db_answer[ifp][1])
+				results[ifp].append(score)
 
+	#AVG brier per IFP
+	scores = {}
+	for ifp in ifps:
+		scores[ifp] = np.mean(results[ifp])
 
+	return scores
+		
 
 # Aggregation placeholder
 all_ifp = np.asarray(list(db.keys()))
@@ -346,8 +428,13 @@ train_input = {k: db[k] for k in ifp_train}
 test_input = {k: db[k] for k in ifp_test}
 
 
+
 #Brier scores for each ifp
-results = M0_aggregation(test_input, db_dates,db_answer)
+# results = M0_aggregation(test_input, db_dates,db_answer)
+# #Mean Brier
+# print(np.array(list(results.values())).mean())
+
+results = M1_aggregation(train_input,test_input, db_dates,db_answer)
 #Mean Brier
 print(np.array(list(results.values())).mean())
 
