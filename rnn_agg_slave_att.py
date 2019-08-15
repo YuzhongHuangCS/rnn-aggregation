@@ -24,12 +24,8 @@ import copy
 from briercompute import brier
 from datetime import datetime, timedelta
 import math
-#import torch
-#import torch.nn as nn
 
-N_Q_DIM = 32
-N_K_DIM = 32
-N_V_DIM = 32
+N_RNN_DIM = 32
 N_EMB_DIM = 8
 
 feature_used = sys.argv[1]
@@ -104,14 +100,14 @@ if True:# or not os.path.exists('cache.ckpt'):
 	print(human_feature.columns)
 
 	ts_feature_list = ['x_acf1', 'x_acf10', 'diff1_acf1', 'diff1_acf10',
-	   'diff2_acf1', 'diff2_acf10', 'seas_acf1', 'ARCH.LM', 'crossing_points',
-	   'entropy', 'flat_spots', 'arch_acf', 'garch_acf', 'arch_r2', 'garch_r2',
-	   'alpha', 'beta', 'hurst', 'lumpiness', 'nonlinearity', 'x_pacf5',
-	   'diff1x_pacf5', 'diff2x_pacf5', 'seas_pacf', 'nperiods',
-	   'seasonal_period', 'trend', 'spike', 'linearity', 'curvature', 'e_acf1',
-	   'e_acf10', 'seasonal_strength', 'peak', 'trough', 'stability',
-	   'hw_alpha', 'hw_beta', 'hw_gamma', 'unitroot_kpss', 'unitroot_pp',
-	   'series_length', 'ratio', 'skew']
+       'diff2_acf1', 'diff2_acf10', 'seas_acf1', 'ARCH.LM', 'crossing_points',
+       'entropy', 'flat_spots', 'arch_acf', 'garch_acf', 'arch_r2', 'garch_r2',
+       'alpha', 'beta', 'hurst', 'lumpiness', 'nonlinearity', 'x_pacf5',
+       'diff1x_pacf5', 'diff2x_pacf5', 'seas_pacf', 'nperiods',
+       'seasonal_period', 'trend', 'spike', 'linearity', 'curvature', 'e_acf1',
+       'e_acf10', 'seasonal_strength', 'peak', 'trough', 'stability',
+       'hw_alpha', 'hw_beta', 'hw_gamma', 'unitroot_kpss', 'unitroot_pp',
+       'series_length', 'ratio', 'skew']
 
 	ts_feature = pd.read_csv('data/ts_features.csv')
 	tf_cols = ts_feature.columns.tolist()
@@ -310,7 +306,7 @@ if True:# or not os.path.exists('cache.ckpt'):
 	special_symbol = {
 		'padding': 0,
 		'unknown': 1,
-		'Auto ARIMA': 2,
+		'Auto ARIMA': 2
 	}
 
 	id_counter = Counter()
@@ -456,55 +452,7 @@ else:
 		input_test, id_test, target_test, answer_test, is_ordered_test, is_4_test, is_3_test, weight_test, seq_length_test, gather_index_test, num_option_mask_test, num_option_ary_test,index_map_test,
 		] = pickle.load(fin)
 	'''
-'''
-class AggregationLayer(nn.Module):
-	def __init__(self):
-		super(AggregationLayer, self).__init__()
-		self.embedding = nn.Embedding(len(id2index), N_EMB_DIM)
-		self.q = nn.Conv1d(5+N_EMB_DIM+n_feature, N_Q_DIM, 1)
-		self.k = nn.Conv1d(5+N_EMB_DIM+n_feature, N_K_DIM, 1)
-		self.v = nn.Conv1d(5+N_EMB_DIM+n_feature, N_V_DIM, 1)
-		self.softmax_1 = nn.Softmax(dim=1)
-		self.tanh = nn.Tanh()
-		self.linear = nn.Linear(N_V_DIM, 5, bias=True)
 
-	def forward(self, input_t, id_t, gather_t):
-		id_embedded = self.embedding(id_t)
-		combined_input = torch.transpose(torch.cat((input_t, id_embedded), 2), 1, 2)
-
-		q_output = torch.transpose(self.q(combined_input), 1, 2)
-		k_output = torch.transpose(self.k(combined_input), 1, 2)
-		v_output = torch.transpose(self.v(combined_input), 1, 2)
-
-		qk_output = torch.matmul(q_output, torch.transpose(k_output, 1, 2)) / (N_K_DIM ** 0.5)
-
-		output = torch.empty((gather_t.shape[0], N_V_DIM))
-		for index, seq_length in gather_t:
-			att = self.softmax_1(qk_output[index, :seq_length, :seq_length])
-			v_local = v_output[index, :seq_length, :]
-			weighted_state = torch.sum(torch.matmul(att, v_local), 0)
-			output[index, :] = weighted_state
-
-		return self.linear(self.tanh(output))
-
-model = AggregationLayer()
-criterion = nn.MSELoss(reduction='mean')
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
-target_train = torch.from_numpy(target_train).float()
-for t in range(100):
-	prob = model(torch.from_numpy(input_train).float(), torch.from_numpy(id_train).long(), torch.from_numpy(gather_index_train).long())
-
-	# Compute and print loss
-	loss = criterion(prob, target_train)
-	print(t, loss.item())
-
-	# Zero gradients, perform a backward pass, and update the weights.
-	optimizer.zero_grad()
-	loss.backward()
-	optimizer.step()
-
-
-'''
 # Network placeholder
 is_training = tf.placeholder_with_default(False, shape=(), name='is_training')
 input_placeholder = tf.placeholder(tf.float32, [None, max_steps, 5 + n_feature])
@@ -524,23 +472,26 @@ embedded_features = tf.nn.embedding_lookup(embedding, id_placeholder)
 
 #combined_input = input_placeholder
 combined_input = tf.concat([input_placeholder, embedded_features], 2)
-q_filter = tf.get_variable('q_w', shape=(1, 5+N_EMB_DIM+n_feature, N_Q_DIM))
-q_output = tf.nn.conv1d(combined_input, q_filter, stride=1, padding='VALID')
-k_filter = tf.get_variable('k_w', shape=(1, 5+N_EMB_DIM+n_feature, N_K_DIM))
-k_output = tf.nn.conv1d(combined_input, k_filter, stride=1, padding='VALID')
-v_filter = tf.get_variable('v_w', shape=(1, 5+N_EMB_DIM+n_feature, N_V_DIM))
-v_output = tf.nn.conv1d(combined_input, v_filter, stride=1, padding='VALID')
 
-#pdb.set_trace()
-#output = torch.empty((gather_t.shape[0], N_V_DIM))
-output = tf.TensorArray(dtype=tf.float32, size=n_forecast_placeholder, element_shape=(N_V_DIM, ))
+input_keep_prob = tf.cond(is_training, lambda:tf.constant(0.95), lambda:tf.constant(1.0))
+output_keep_prob = tf.cond(is_training, lambda:tf.constant(0.95), lambda:tf.constant(1.0))
+state_keep_prob = tf.cond(is_training, lambda:tf.constant(0.95), lambda:tf.constant(1.0))
+zero_state = tf.placeholder(tf.float32, [None, N_RNN_DIM])
+cell = tf.nn.rnn_cell.GRUCell(N_RNN_DIM, kernel_initializer=tf.orthogonal_initializer(), bias_initializer=tf.zeros_initializer())
+cell_dropout = tf.contrib.rnn.DropoutWrapper(cell, input_keep_prob = input_keep_prob, output_keep_prob = output_keep_prob, state_keep_prob = state_keep_prob)
+
+state_series, _ = tf.nn.dynamic_rnn(cell_dropout, combined_input, sequence_length=seq_length_placeholder, dtype=tf.float32, initial_state=zero_state)
+
+output = tf.TensorArray(dtype=tf.float32, size=n_forecast_placeholder, element_shape=(N_RNN_DIM, ))
 
 def compute(i, out):
 	index = gather_index_placeholder[i, 0]
 	seq_length = gather_index_placeholder[i, 1]
 
-	att = tf.nn.softmax(tf.matmul(q_output[index, :seq_length, :], tf.transpose(k_output[index, :seq_length, :])) / (N_K_DIM ** 0.5))
-	weighted_state = tf.reduce_sum(tf.matmul(att, v_output[index, :seq_length, :]), axis=0)
+	roi = state_series[index, :seq_length, :]
+	att = tf.nn.softmax(tf.matmul(roi, tf.transpose(roi)) / (N_RNN_DIM ** 0.5))
+
+	weighted_state = tf.reduce_sum(tf.matmul(att, roi), axis=0)
 	return i+1, out.write(i, weighted_state)
 
 _, out1 = tf.while_loop(
@@ -549,21 +500,14 @@ _, out1 = tf.while_loop(
 	(0, output)
 )
 
-needed_state = out1.stack()
-#pdb.set_trace()
-#input_keep_prob = tf.cond(is_training, lambda:tf.constant(0.95), lambda:tf.constant(1.0))
-#output_keep_prob = tf.cond(is_training, lambda:tf.constant(0.95), lambda:tf.constant(1.0))
-#state_keep_prob = tf.cond(is_training, lambda:tf.constant(0.95), lambda:tf.constant(1.0))
-#zero_state = tf.placeholder(tf.float32, [None, N_RNN_DIM])
-#cell = tf.nn.rnn_cell.GRUCell(N_RNN_DIM, kernel_initializer=tf.orthogonal_initializer(), bias_initializer=tf.zeros_initializer())
-#cell_dropout = tf.contrib.rnn.DropoutWrapper(cell, input_keep_prob = input_keep_prob, output_keep_prob = output_keep_prob, state_keep_prob = state_keep_prob)
+att_state = out1.stack()
+needed_state = tf.gather_nd(state_series, gather_index_placeholder)
+combined_state = tf.concat([needed_state, att_state], 1)
 
-#state_series, _ = tf.nn.dynamic_rnn(cell_dropout, combined_input, sequence_length=seq_length_placeholder, dtype=tf.float32, initial_state=zero_state)
-
-W1 = tf.get_variable('weight1', shape=(N_V_DIM, 5), initializer=tf.glorot_uniform_initializer())
+W1 = tf.get_variable('weight1', shape=(N_RNN_DIM * 2, 5), initializer=tf.glorot_uniform_initializer())
 b1 = tf.get_variable('bias1', shape=(1, 5), initializer=tf.zeros_initializer())
-#needed_state = tf.gather_nd(state_series, gather_index_placeholder)
-prediction = tf.matmul(tf.nn.tanh(needed_state), W1) + b1
+
+prediction = tf.matmul(tf.nn.tanh(combined_state), W1) + b1
 prob = tf.nn.softmax(tf.math.add(prediction, num_option_mask_placeholder))
 loss_mse = tf.math.reduce_sum(tf.math.squared_difference(target_placeholder, prob), axis=1)
 
@@ -635,16 +579,13 @@ save_dir = 'model/{}/{}'.format(feature_used.replace('/', '_').replace(' ', '_')
 os.makedirs(save_dir, exist_ok=True)
 save_path = save_dir + '/model.ckpt'
 
-config = tf.ConfigProto()
-config.graph_options.optimizer_options.global_jit_level = tf.OptimizerOptions.ON_1
-
-with tf.Session(config=config) as sess:
+with tf.Session() as sess:
 	sess.run(tf.global_variables_initializer())
 
 	#pdb.set_trace()
 	test_scores = []
-	#train_zero_state = np.zeros((n_train, N_RNN_DIM), dtype=np.float32)
-	#test_zero_state = np.zeros((n_test, N_RNN_DIM), dtype=np.float32)
+	train_zero_state = np.zeros((n_train, N_RNN_DIM), dtype=np.float32)
+	test_zero_state = np.zeros((n_test, N_RNN_DIM), dtype=np.float32)
 
 	smallest_loss = float('inf')
 	wait = 0
@@ -679,7 +620,7 @@ with tf.Session(config=config) as sess:
 					seq_length_placeholder: seq_length_train,
 					gather_index_placeholder: gather_index_train,
 					num_option_mask_placeholder: num_option_mask_train,
-					#zero_state: train_zero_state,
+					zero_state: train_zero_state,
 					is_training: True,
 					n_forecast_placeholder: n_forecast_train
 				}
@@ -698,7 +639,7 @@ with tf.Session(config=config) as sess:
 					seq_length_placeholder: seq_length_test,
 					gather_index_placeholder: gather_index_test,
 					num_option_mask_placeholder: num_option_mask_test,
-					#zero_state: test_zero_state,
+					zero_state: test_zero_state,
 					is_training: False,
 					n_forecast_placeholder: n_forecast_test
 				}
