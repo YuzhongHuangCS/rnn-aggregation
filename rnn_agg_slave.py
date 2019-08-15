@@ -28,9 +28,9 @@ import math
 N_RNN_DIM = 32
 N_EMB_DIM = 8
 
-human_feature_used = sys.argv[1]
+feature_used = sys.argv[1]
 fold_index_used = int(sys.argv[2])
-print('human_feature_used: {}'.format(human_feature_used))
+print('feature_used: {}'.format(feature_used))
 print('fold_index_used: {}'.format(fold_index_used))
 
 def is_ordered(opt):
@@ -78,43 +78,48 @@ if True:# or not os.path.exists('cache.ckpt'):
 					print(e)
 
 
+	human_feature_list = ['Health/Disease', 'Macroeconomics/Finance', 'Natural Sciences/Climate',
+	'Other', 'Politics/Intl Relations', 'Technology', 'entropy_b',
+	'entropy_c', 'entropy_d', 'entropy_human', 'entropy_sage', 'entropy_te',
+	'n_forecasts', 'n_forecasts_b', 'n_forecasts_c',
+	'n_forecasts_d', 'n_forecasts_sage', 'n_forecasts_te', 'ordinal',
+	'p_updates', 'stage', 'variance_b', 'variance_c', 'variance_d',
+	'variance_human', 'variance_sage', 'variance_te']
 
 	human_feature = pd.read_csv('data/human_features.csv').drop_duplicates(subset=['date', 'ifp_id'], keep='last')
 	hf_cols = human_feature.columns.tolist()
-	hf_cols.remove(human_feature_used)
 	hf_cols.remove('ifp_id')
 	hf_cols.remove('date')
 	hf_cols.remove('stage')
 	hf_cols.remove('p_updates')
 	hf_cols.remove('Health/Disease')
+	if feature_used in human_feature_list:
+		hf_cols.remove(feature_used)
+
 	human_feature = human_feature.drop(columns=hf_cols)
 	print(human_feature.columns)
-	#hf_cols = human_feature.columns
-	#.drop(columns=[human_feature_used])
-	'''
-		#'Macroeconomics/Finance',
-		'Health/Disease',  'Natural Sciences/Climate',
-		'Other', 'Politics/Intl Relations', 'Technology', 'entropy_b',
-		'entropy_c', 'entropy_d', 'entropy_human', 'entropy_sage', 'entropy_te',
-		'n_forecasts', 'n_forecasts_b', 'n_forecasts_c',
-		'n_forecasts_d', 'n_forecasts_sage', 'n_forecasts_te', 'ordinal',
-		'p_updates', 'stage', 'variance_b', 'variance_c', 'variance_d',
-		'variance_human', 'variance_sage', 'variance_te'])
 
-	ts_feature = pd.read_csv('data/ts_features.csv').drop(columns=['x_acf1', 'x_acf10', 'diff1_acf1', 'diff1_acf10',
-		'diff2_acf1', 'diff2_acf10', 'seas_acf1', 'ARCH.LM', 'crossing_points',
-		'entropy', 'flat_spots', 'arch_acf', 'garch_acf', 'arch_r2', 'garch_r2',
-		'alpha', 'beta', 'hurst', 'lumpiness', 'nonlinearity', 'x_pacf5',
-		'diff1x_pacf5', 'diff2x_pacf5', 'seas_pacf', 'nperiods',
-		'seasonal_period', 'trend', 'spike', 'linearity', 'curvature', 'e_acf1',
-		'e_acf10', 'seasonal_strength', 'peak', 'trough', 'stability',
-		'hw_alpha', 'hw_beta', 'hw_gamma', 'unitroot_kpss', 'unitroot_pp',
-		'series_length', 'skew'
-		#'ratio',
-		])
-	'''
-	#n_feature = human_feature.shape[1] + ts_feature.shape[1] - 4
-	n_feature = human_feature.shape[1] - 2
+	ts_feature_list = ['x_acf1', 'x_acf10', 'diff1_acf1', 'diff1_acf10',
+       'diff2_acf1', 'diff2_acf10', 'seas_acf1', 'ARCH.LM', 'crossing_points',
+       'entropy', 'flat_spots', 'arch_acf', 'garch_acf', 'arch_r2', 'garch_r2',
+       'alpha', 'beta', 'hurst', 'lumpiness', 'nonlinearity', 'x_pacf5',
+       'diff1x_pacf5', 'diff2x_pacf5', 'seas_pacf', 'nperiods',
+       'seasonal_period', 'trend', 'spike', 'linearity', 'curvature', 'e_acf1',
+       'e_acf10', 'seasonal_strength', 'peak', 'trough', 'stability',
+       'hw_alpha', 'hw_beta', 'hw_gamma', 'unitroot_kpss', 'unitroot_pp',
+       'series_length', 'ratio', 'skew']
+
+	ts_feature = pd.read_csv('data/ts_features.csv')
+	tf_cols = ts_feature.columns.tolist()
+	tf_cols.remove('ifp_id')
+	tf_cols.remove('date')
+	tf_cols.remove('arch_acf')
+	if feature_used in ts_feature_list:
+		tf_cols.remove(feature_used)
+	ts_feature = ts_feature.drop(columns=tf_cols)
+	print(ts_feature.columns)
+
+	n_feature = human_feature.shape[1] + ts_feature.shape[1] - 4
 
 	human_dict = {}
 	for index, row in human_feature.iterrows():
@@ -129,7 +134,6 @@ if True:# or not os.path.exists('cache.ckpt'):
 		else:
 			human_dict[ifp_id][date] = row.drop(labels=['ifp_id', 'date']).values
 
-	'''
 	ts_dict = {}
 	for index, row in ts_feature.iterrows():
 		ifp_id = row['ifp_id']
@@ -142,14 +146,13 @@ if True:# or not os.path.exists('cache.ckpt'):
 			print('Duplicate feature')
 		else:
 			ts_dict[ifp_id][date] = row.drop(labels=['ifp_id', 'date']).values
-	'''
+
 	def get_feature(ifp_id, date):
 		if ifp_id in human_dict and date in human_dict[ifp_id]:
 			hf = human_dict[ifp_id][date]
 		else:
 			hf = np.zeros(human_feature.shape[1]-2)
 
-		'''
 		if ifp_id in ts_dict and date in ts_dict[ifp_id]:
 			mf = ts_dict[ifp_id][date]
 		else:
@@ -162,8 +165,7 @@ if True:# or not os.path.exists('cache.ckpt'):
 			print('OK')
 
 		return cf
-		'''
-		return hf
+
 
 	df = pd.read_csv('data/human.csv')
 	#df.fillna(0, inplace=True)
@@ -327,7 +329,7 @@ if True:# or not os.path.exists('cache.ckpt'):
 	n_forecast_train = sum([len(v) for k, v in db_dates.items() if k in ifp_train])
 
 	input_train = np.zeros((n_train, max_steps, 5 + n_feature))
-	id_train = np.zeros((n_train, max_steps, 1), dtype=int)
+	id_train = np.zeros((n_train, max_steps), dtype=int)
 	target_train = np.zeros((n_forecast_train, 5))
 	answer_train = np.zeros(n_forecast_train, dtype=int)
 	is_ordered_train = np.zeros(n_forecast_train, dtype=bool)
@@ -386,7 +388,7 @@ if True:# or not os.path.exists('cache.ckpt'):
 	n_forecast_test = sum([len(v) for k, v in db_dates.items() if k in ifp_test])
 
 	input_test = np.zeros((n_test, max_steps, 5 + n_feature))
-	id_test = np.zeros((n_test, max_steps, 1), dtype=int)
+	id_test = np.zeros((n_test, max_steps), dtype=int)
 	target_test = np.zeros((n_forecast_test, 5))
 	answer_test = np.zeros(n_forecast_test, dtype=int)
 	is_ordered_test = np.zeros(n_forecast_test, dtype=bool)
@@ -463,7 +465,7 @@ else:
 # Network placeholder
 is_training = tf.placeholder_with_default(False, shape=(), name='is_training')
 input_placeholder = tf.placeholder(tf.float32, [None, max_steps, 5 + n_feature])
-id_placeholder = tf.placeholder(tf.int32, [None, max_steps, 1])
+id_placeholder = tf.placeholder(tf.int32, [None, max_steps])
 target_placeholder = tf.placeholder(tf.float32, [None, 5])
 is_ordered_placeholder = tf.placeholder(tf.bool, [None])
 is_4_placeholder = tf.placeholder(tf.bool, [None])
@@ -477,7 +479,7 @@ embedding = tf.get_variable('embedding', shape=(len(id2index), N_EMB_DIM), initi
 embedded_features = tf.nn.embedding_lookup(embedding, id_placeholder)
 
 #combined_input = input_placeholder
-combined_input = tf.concat([input_placeholder, embedded_features[:, :, 0, :]], 2)
+combined_input = tf.concat([input_placeholder, embedded_features], 2)
 
 input_keep_prob = tf.cond(is_training, lambda:tf.constant(0.95), lambda:tf.constant(1.0))
 output_keep_prob = tf.cond(is_training, lambda:tf.constant(0.95), lambda:tf.constant(1.0))
@@ -559,7 +561,7 @@ gradients, _ = tf.clip_by_global_norm(gradients, 5.0)
 train_op = optimizer.apply_gradients(zip(gradients, variables))
 
 saver = tf.train.Saver()
-save_dir = 'model/{}/{}'.format(human_feature_used.replace('/', '_').replace(' ', '_'), fold_index)
+save_dir = 'model/{}/{}'.format(feature_used.replace('/', '_').replace(' ', '_'), fold_index)
 os.makedirs(save_dir, exist_ok=True)
 save_path = save_dir + '/model.ckpt'
 
