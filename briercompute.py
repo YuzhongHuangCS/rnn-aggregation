@@ -97,7 +97,7 @@ def adjustday(dt):
 
 	return dt
 
-def computebrier(questioncondition, firstday, lastday, question_is_ordered, correct_answer, 
+def computebrier(questioncondition, firstday, lastday, question_is_ordered, correct_answer,
 		userfieldfn=lambda x: x[2],
 		datefieldfn=lambda x: x[0]
 		):
@@ -112,7 +112,7 @@ def computebrier(questioncondition, firstday, lastday, question_is_ordered, corr
 	"""
 	userset = set([userfieldfn(i) for i in questioncondition])
 
-	# figure out the question's options and make a default 
+	# figure out the question's options and make a default
 	# uniform forecast for the default
 	f_uniform = questioncondition[0]
 	n_options = f_uniform[4]
@@ -168,7 +168,7 @@ def computebrier(questioncondition, firstday, lastday, question_is_ordered, corr
 
 		# we are about to do condition 2, let's see the average brier so far
 		useravg = np.mean([b for u, b in dayuserbrier[day].items()])
-		
+
 		# COND 2
 		# make a forecast for:
 		# all of the users who did NOT forecast and DID NOT forecast before
@@ -198,7 +198,7 @@ def get_user_brier(data, db_dates, db_answer, brier_type="mean_sum"):
 		lastday = max(db_dates[ifp])
 		dayuserbrier = computebrier(data[ifp], firstday, lastday, db_answer[ifp][1], db_answer[ifp][0])
 
-		
+
 		for d, ub in dayuserbrier.items():
 			for u, b in ub.items():
 				user2dailyscores[u].append(b)
@@ -221,13 +221,12 @@ def get_user_brier(data, db_dates, db_answer, brier_type="mean_sum"):
 		final = dict([(i, np.mean(j)) for i, j in question2user2brier.items()])
 	elif brier_type == "sum":
 		final = dict([(i, np.sum(j)) for i, j in question2user2brier.items()])
-	else: # This is the new default: the average of mean and sum score  
+	else: # This is the new default: the average of mean and sum score
 		final = dict([(i, ((np.sum(j) + np.mean(j))/2 )) for i, j in question2user2brier.items()])
 
 	ranked_brier = {}
 	keys = final.keys()
-	values = rankdata(final.values())    
+	values = rankdata(list(final.values()))
 	ranked_brier = dict(zip(keys, values))
 
 	return defaultdict(lambda: 0.0,ranked_brier), question2user2brier
-

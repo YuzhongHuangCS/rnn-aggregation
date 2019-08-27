@@ -37,7 +37,7 @@ def is_ordered(opt):
 
 	return False
 
-if not os.path.exists('cache.ckpt'):
+if True or not os.path.exists('cache.ckpt'):
 	print('Reading data')
 	db_answer = {}
 	db_dates = {}
@@ -301,14 +301,14 @@ def M1(data, day, ordered,
 		user_activity = defaultdict(lambda: 0.),
 		min_activity = 10, # min # of resolved forecasts answered to update accuracy score
 		n_most_recent=0.2, # temporal subset
-		n_minimum = 10, # the MIN forecasts to keep, this supercedes n_most_recent 
+		n_minimum = 10, # the MIN forecasts to keep, this supercedes n_most_recent
 		only_human = False, # only use human forecasts
 		only_arima = False, #use only arima as machine models
 		gamma=2., #accuracy/brier exponent
 		alpha=1.3, # the group level extremizing parameter,
 		):
 
-	
+
 	# Step 1:Temporal subsetting
 	predinput = [x for x in data if x[0]<=day]
 	if only_human:
@@ -334,14 +334,14 @@ def M1(data, day, ordered,
 	ntokeep = int(ntokeep)
 	date = forecasts[ntokeep][0]
 	# date = datetime.combine(date, time.min)
-	# print("Getting forecasts produced on date %s or later ..." % date) 
+	# print("Getting forecasts produced on date %s or later ..." % date)
 	forecasts = [x for x in forecasts if x[0]>=date]
 
 	# Step 2:Aggregate forecasts
 	result =  np.zeros(5)
 	for f in forecasts:
 		user = f[2]
-		num_options = f[4] 
+		num_options = f[4]
 		pred = np.array(f[5:])
 		if user_activity[user]>=min_activity:
 			w = brier_score[user]
@@ -356,7 +356,7 @@ def M1(data, day, ordered,
 	result = result[:num_options]
 	result /= np.nansum(result)
 
-	#Step 4:Aggregate-level extremization and weighting 
+	#Step 4:Aggregate-level extremization and weighting
 	result = extremize(result, alpha, ordered)
 
 
@@ -371,7 +371,7 @@ def M0_aggregation(test_input, db_dates,db_answer):
 	for ifp in ifps:
 		results[ifp] = []
 		for day in db_dates[ifp]:
-			pred = M1(test_input[ifp], day, 
+			pred = M1(test_input[ifp], day,
 				ordered= db_answer[ifp][1],
 				alpha=1.
 				)
@@ -387,10 +387,9 @@ def M0_aggregation(test_input, db_dates,db_answer):
 	return scores
 
 def M2_aggregation(train_input,test_input, db_dates,db_answer):
-	
 	brier_score, question2user2brier = get_user_brier(train_input,db_dates,db_answer)
 	user_activity = {user: len(ifps) for user, ifps in question2user2brier.items()}
-	user_activity = defaultdict(lambda: 0., brier_score)
+	user_activity = defaultdict(lambda: 0., user_activity)
 	brier_score = transform_range(brier_score,0.1,1.)
 	brier_score =  defaultdict(lambda: 0.5, brier_score)
 
@@ -399,8 +398,9 @@ def M2_aggregation(train_input,test_input, db_dates,db_answer):
 	for ifp in ifps:
 		results[ifp] = []
 		for day in db_dates[ifp]:
-			pred = M1(test_input[ifp], day, 
-				ordered= db_answer[ifp][1], 
+			#pdb.set_trace()
+			pred = M1(test_input[ifp], day,
+				ordered= db_answer[ifp][1],
 				brier_score=brier_score,
 				user_activity = user_activity
 				)
@@ -414,7 +414,7 @@ def M2_aggregation(train_input,test_input, db_dates,db_answer):
 		scores[ifp] = np.mean(results[ifp])
 
 	return scores
-		
+
 
 # Aggregation placeholder
 all_ifp = np.asarray(list(db.keys()))
@@ -422,6 +422,8 @@ all_ifp = np.asarray(list(db.keys()))
 kf = sklearn.model_selection.KFold(shuffle=True, n_splits=5, random_state=2019)
 folds = [[all_ifp[f[0]], all_ifp[f[1]]] for f in kf.split(all_ifp)]
 
+scores_m0 = []
+scores_m2 = []
 for i in range(5):
 	fold_index = i
 
@@ -440,13 +442,23 @@ for i in range(5):
 
 	#Brier scores for each ifp
 	results = M0_aggregation(test_input, db_dates,db_answer)
+	with open('plot_data/m0_brier_db_{}.pickle'.format(i), 'wb') as fout:
+		pickle.dump(results, fout, pickle.HIGHEST_PROTOCOL)
 
 	#Mean Brier of M0
 	print('M0 = ', np.array(list(results.values())).mean())
+	scores_m0.append(np.array(list(results.values())).mean())
 
 	results = M2_aggregation(train_input,test_input, db_dates,db_answer)
+	with open('plot_data/m2_brier_db_{}.pickle'.format(i), 'wb') as fout:
+		pickle.dump(results, fout, pickle.HIGHEST_PROTOCOL)
+
 	#Mean Brier of M2
 	print('M2 = ', np.array(list(results.values())).mean())
+	scores_m2.append(np.array(list(results.values())).mean())
 
-
+pdb.set_trace()
+print(np.mean(scores_m0))
+print(np.mean(scores_m2))
+#pdb.set_trace()
 print('OK')
