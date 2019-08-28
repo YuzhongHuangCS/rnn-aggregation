@@ -18,6 +18,8 @@ import sklearn.decomposition
 import sklearn.cluster
 import scipy.stats
 # import tensorflow as tf
+import torch
+
 import random
 import copy
 from briercompute import brier, get_user_brier
@@ -26,6 +28,8 @@ import math
 
 N_RNN_DIM = 32
 N_EMB_DIM = 8
+N_HIDDEN_DIM = 8
+EPS = 1e-8
 
 def is_ordered(opt):
 	keywords = ['Less', 'Between', 'More', 'inclusive','less', 'between', 'more']
@@ -37,7 +41,7 @@ def is_ordered(opt):
 
 	return False
 
-if True or not os.path.exists('cache.ckpt'):
+if not os.path.exists('cache.ckpt'):
 	print('Reading data')
 	db_answer = {}
 	db_dates = {}
@@ -71,12 +75,55 @@ if True or not os.path.exists('cache.ckpt'):
 					pdb.set_trace()
 					print(e)
 
+	human_feature_list = ['Health/Disease', 'Macroeconomics/Finance', 'Natural Sciences/Climate',
+	'Other', 'Politics/Intl Relations', 'Technology', 'entropy_b',
+	'entropy_c', 'entropy_d', 'entropy_human', 'entropy_sage', 'entropy_te',
+	'n_forecasts', 'n_forecasts_b', 'n_forecasts_c',
+	'n_forecasts_d', 'n_forecasts_sage', 'n_forecasts_te', 'ordinal',
+	'p_updates', 'stage', 'variance_b', 'variance_c', 'variance_d',
+	'variance_human', 'variance_sage', 'variance_te']
 
 	human_feature = pd.read_csv('data/human_features.csv').drop_duplicates(subset=['date', 'ifp_id'], keep='last')
-	ts_feature = pd.read_csv('data/ts_features.csv')
+	hf_cols = human_feature.columns.tolist()
+	hf_cols.remove('ifp_id')
+	hf_cols.remove('date')
+	hf_cols.remove('stage')
+	hf_cols.remove('p_updates')
+	hf_cols.remove('Health/Disease')
+	hf_cols.remove('Macroeconomics/Finance')
+	hf_cols.remove('Natural Sciences/Climate')
+	hf_cols.remove('Other')
+	hf_cols.remove('Politics/Intl Relations')
+	hf_cols.remove('Technology')
+	#if feature_used in human_feature_list:
+	#	hf_cols.remove(feature_used)
 
-	#n_feature = human_feature.shape[1] + ts_feature.shape[1] - 4
-	n_feature = 0
+	human_feature = human_feature.drop(columns=hf_cols)
+	print(human_feature.columns)
+
+	ts_feature_list = ['x_acf1', 'x_acf10', 'diff1_acf1', 'diff1_acf10',
+		'diff2_acf1', 'diff2_acf10', 'seas_acf1', 'ARCH.LM', 'crossing_points',
+		'entropy', 'flat_spots', 'arch_acf', 'garch_acf', 'arch_r2', 'garch_r2',
+		'alpha', 'beta', 'hurst', 'lumpiness', 'nonlinearity', 'x_pacf5',
+		'diff1x_pacf5', 'diff2x_pacf5', 'seas_pacf', 'nperiods',
+		'seasonal_period', 'trend', 'spike', 'linearity', 'curvature', 'e_acf1',
+		'e_acf10', 'seasonal_strength', 'peak', 'trough', 'stability',
+		'hw_alpha', 'hw_beta', 'hw_gamma', 'unitroot_kpss', 'unitroot_pp',
+		'series_length', 'ratio', 'skew']
+
+	ts_feature = pd.read_csv('data/ts_features.csv')
+	tf_cols = ts_feature.columns.tolist()
+	tf_cols.remove('ifp_id')
+	tf_cols.remove('date')
+	tf_cols.remove('ratio')
+	tf_cols.remove('arch_acf')
+	#if feature_used in ts_feature_list:
+	#	tf_cols.remove(feature_used)
+	ts_feature = ts_feature.drop(columns=tf_cols)
+	print(ts_feature.columns)
+
+	n_feature = human_feature.shape[1] + ts_feature.shape[1] - 4
+	print('n_feature', n_feature)
 
 	human_dict = {}
 	for index, row in human_feature.iterrows():
@@ -103,26 +150,6 @@ if True or not os.path.exists('cache.ckpt'):
 			print('Duplicate feature')
 		else:
 			ts_dict[ifp_id][date] = row.drop(labels=['ifp_id', 'date']).values
-
-	def get_feature(ifp_id, date):
-		if ifp_id in human_dict and date in human_dict[ifp_id]:
-			hf = human_dict[ifp_id][date]
-		else:
-			hf = np.zeros(human_feature.shape[1]-2)
-
-		if ifp_id in ts_dict and date in ts_dict[ifp_id]:
-			mf = ts_dict[ifp_id][date]
-		else:
-			mf = np.zeros(ts_feature.shape[1]-2)
-
-		try:
-			cf = np.concatenate([hf, mf])
-		except ValueError as e:
-			pdb.set_trace()
-			print('OK')
-
-		return cf
-
 
 	df = pd.read_csv('data/human.csv')
 	#df.fillna(0, inplace=True)
@@ -244,13 +271,33 @@ if True or not os.path.exists('cache.ckpt'):
 
 	with open('cache.ckpt', 'wb') as fout:
 		pickle.dump([
-			db, db_answer, db_dates,
+			db, db_answer, db_dates, human_dict, human_feature, ts_dict, ts_feature
 		], fout, pickle.HIGHEST_PROTOCOL)
 else:
 	with open('cache.ckpt', 'rb') as fin:
-		[db, db_answer, db_dates,
+		[db, db_answer, db_dates, human_dict, human_feature, ts_dict, ts_feature
 		] = pickle.load(fin)
+		n_feature = human_feature.shape[1] + ts_feature.shape[1] - 4
+		print('n_feature', n_feature)
 
+def get_feature(ifp_id, date):
+	if ifp_id in human_dict and date in human_dict[ifp_id]:
+		hf = human_dict[ifp_id][date]
+	else:
+		hf = np.zeros(human_feature.shape[1]-2)
+
+	if ifp_id in ts_dict and date in ts_dict[ifp_id]:
+		mf = ts_dict[ifp_id][date]
+	else:
+		mf = np.zeros(ts_feature.shape[1]-2)
+
+	try:
+		cf = np.concatenate([hf, mf])
+	except ValueError as e:
+		pdb.set_trace()
+		print('OK')
+
+	return cf
 
 # transforms range
 def transform_range(d,ini,fin):
@@ -264,9 +311,6 @@ def transform_range(d,ini,fin):
     r[key] = 1.1 - (value-mi)*s + ini
   return r
 
-
-
-
 def extremize(probs, alpha, ordered):
 	c = len(probs)
 	cum_ext = []
@@ -276,7 +320,7 @@ def extremize(probs, alpha, ordered):
 			p = prob + cum_sum
 			if p>1.: #had problems with p=1.00000002
 				p=1.0
-			cum_ext.append(((c-1.)*p)**alpha/( ((c-1.)*p)**alpha + (c-1.)*(1.-p)**alpha ))
+			cum_ext.append(((c-1.)*max(p, EPS))**alpha/( ((c-1.)*max(p, EPS))**alpha + (c-1.)*(max(1.-p, EPS))**alpha ))
 			cum_sum += prob
 		last = 0.
 
@@ -286,7 +330,7 @@ def extremize(probs, alpha, ordered):
 	else:
 		for prob in probs:
 			#Non-Ordered IFPs:
-			cum_ext.append(((c-1.)*prob)**alpha/( ((c-1.)*prob)**alpha + (c-1.)*(1.-prob)**alpha) )
+			cum_ext.append(((c-1.)*max(prob, EPS))**alpha/( ((c-1.)*max(prob, EPS))**alpha + (c-1.)*(max(1.-prob, EPS))**alpha) )
 
 	#normalize
 	norm = sum(cum_ext)
@@ -386,34 +430,87 @@ def M0_aggregation(test_input, db_dates,db_answer):
 
 	return scores
 
-def M2_aggregation(train_input,test_input, db_dates,db_answer):
+def M2_aggregation(train_input, test_input, db_dates,db_answer):
 	brier_score, question2user2brier = get_user_brier(train_input,db_dates,db_answer)
 	user_activity = {user: len(ifps) for user, ifps in question2user2brier.items()}
 	user_activity = defaultdict(lambda: 0., user_activity)
 	brier_score = transform_range(brier_score,0.1,1.)
 	brier_score =  defaultdict(lambda: 0.5, brier_score)
 
-	ifps = test_input.keys()
-	results = {}
-	for ifp in ifps:
-		results[ifp] = []
-		for day in db_dates[ifp]:
-			#pdb.set_trace()
-			pred = M1(test_input[ifp], day,
-				ordered= db_answer[ifp][1],
-				brier_score=brier_score,
-				user_activity = user_activity
+	u1 = math.sqrt(6/(n_feature + N_HIDDEN_DIM))
+	W1 = torch.FloatTensor(n_feature, N_HIDDEN_DIM).uniform_(-u1, u1)
+	W1.requires_grad = True
+	b1 = torch.zeros(N_HIDDEN_DIM, requires_grad=True)
+
+	u2 = math.sqrt(6/(N_HIDDEN_DIM + 1))
+	W2 = torch.FloatTensor(N_HIDDEN_DIM, 1).uniform_(-u2, u2)
+	W2.requires_grad = True
+	b2 = torch.zeros(1, requires_grad=True)
+
+	optimizer = torch.optim.Adam([W1, b1, W2, b2], lr=1e-2, weight_decay=1e-5)
+	lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.95, patience=2, verbose=True)
+
+	ifps_train = train_input.keys()
+	ifps_test = test_input.keys()
+
+	for z in range(10):
+		results_train = {}
+		for ifp in ifps_train:
+			results_train[ifp] = []
+			for day in db_dates[ifp]:
+				feature = get_feature(ifp, datetime.strftime(day, "%Y-%m-%d"))
+				alpha = torch.sigmoid(torch.matmul(torch.tanh(torch.matmul(torch.from_numpy(feature.astype(np.float32)), W1) + b1), W2) + b2) * 2
+				#print('ifp: {}, day: {}, alpha: {}'.format(ifp, datetime.strftime(day, "%Y-%m-%d"), alpha))
+				pred = M1(train_input[ifp], day,
+					ordered= db_answer[ifp][1],
+					brier_score=brier_score,
+					user_activity = user_activity,
+					alpha=alpha
 				)
-			if len(pred)>0:
-				score =  brier(pred, db_answer[ifp][0], ordered=db_answer[ifp][1])
-				results[ifp].append(score)
+				if len(pred)>0:
+					score =  brier(pred, db_answer[ifp][0], ordered=db_answer[ifp][1])
+					results_train[ifp].append(score)
 
-	#AVG brier per IFP
-	scores = {}
-	for ifp in ifps:
-		scores[ifp] = np.mean(results[ifp])
+		#AVG brier per IFP
+		scores_train = {}
+		for ifp in ifps_train:
+			scores_train[ifp] = torch.mean(torch.stack(results_train[ifp]))
 
-	return scores
+		mmdb_train = torch.mean(torch.stack(list(scores_train.values())))
+
+		optimizer.zero_grad()
+		mmdb_train.backward()
+		optimizer.step()
+		#lr_scheduler.step(mmdb_train)
+
+		results_test = {}
+		for ifp in ifps_test:
+			results_test[ifp] = []
+			for day in db_dates[ifp]:
+				feature = get_feature(ifp, datetime.strftime(day, "%Y-%m-%d"))
+				alpha = torch.sigmoid(torch.matmul(torch.tanh(torch.matmul(torch.from_numpy(feature.astype(np.float32)), W1) + b1), W2) + b2) * 2
+				#print('ifp: {}, day: {}, alpha: {}'.format(ifp, datetime.strftime(day, "%Y-%m-%d"), alpha))
+				pred = M1(test_input[ifp], day,
+					ordered= db_answer[ifp][1],
+					brier_score=brier_score,
+					user_activity = user_activity,
+					alpha=alpha
+				)
+				if len(pred)>0:
+					score =  brier(pred, db_answer[ifp][0], ordered=db_answer[ifp][1])
+					results_test[ifp].append(score)
+
+		#AVG brier per IFP
+		scores_test = {}
+		for ifp in ifps_test:
+			scores_test[ifp] = torch.mean(torch.stack(results_test[ifp]))
+
+		mmdb_test = torch.mean(torch.stack(list(scores_test.values())))
+		print('Epoch: {}, train mmdb: {}, test mmdb: {}'.format(z, mmdb_train, mmdb_test))
+
+		lr_scheduler.step(mmdb_test)
+
+	return scores_test
 
 
 # Aggregation placeholder
@@ -422,7 +519,7 @@ all_ifp = np.asarray(list(db.keys()))
 kf = sklearn.model_selection.KFold(shuffle=True, n_splits=5, random_state=2019)
 folds = [[all_ifp[f[0]], all_ifp[f[1]]] for f in kf.split(all_ifp)]
 
-scores_m0 = []
+#scores_m0 = []
 scores_m2 = []
 for i in range(5):
 	fold_index = i
@@ -438,8 +535,7 @@ for i in range(5):
 	train_input = {k: db[k] for k in ifp_train}
 	test_input = {k: db[k] for k in ifp_test}
 
-
-
+	'''
 	#Brier scores for each ifp
 	results = M0_aggregation(test_input, db_dates,db_answer)
 	with open('plot_data/m0_brier_db_{}.pickle'.format(i), 'wb') as fout:
@@ -448,17 +544,18 @@ for i in range(5):
 	#Mean Brier of M0
 	print('M0 = ', np.array(list(results.values())).mean())
 	scores_m0.append(np.array(list(results.values())).mean())
+	'''
 
 	results = M2_aggregation(train_input,test_input, db_dates,db_answer)
 	with open('plot_data/m2_brier_db_{}.pickle'.format(i), 'wb') as fout:
 		pickle.dump(results, fout, pickle.HIGHEST_PROTOCOL)
 
 	#Mean Brier of M2
-	print('M2 = ', np.array(list(results.values())).mean())
-	scores_m2.append(np.array(list(results.values())).mean())
+	print('M2 = ', torch.mean(torch.stack(list(results.values()))))
+	scores_m2.append(torch.mean(torch.stack(list(results.values()))))
 
 pdb.set_trace()
-print(np.mean(scores_m0))
+#print(np.mean(scores_m0))
 print(np.mean(scores_m2))
 #pdb.set_trace()
 print('OK')

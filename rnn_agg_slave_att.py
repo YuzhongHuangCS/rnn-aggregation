@@ -120,6 +120,7 @@ if True:# or not os.path.exists('cache.ckpt'):
 	print(ts_feature.columns)
 
 	n_feature = human_feature.shape[1] + ts_feature.shape[1] - 4
+	print('n_feature', n_feature)
 
 	human_dict = {}
 	for index, row in human_feature.iterrows():
@@ -206,6 +207,9 @@ if True:# or not os.path.exists('cache.ckpt'):
 		if ifp_id not in db_answer:
 			continue
 
+		if machine_model not in ('Auto ARIMA', ):
+			continue
+
 		if machine_model not in ('Auto ARIMA', 'M4-Meta', 'Arithmetic RW', 'DS-Holt', 'DS-Holt-damped', 'DS-RW', 'DS-SES', 'ETS', 'Geometric RW', 'M4-Comb', 'Mean', 'NNETAR', 'RW', 'RW-DRIFT', 'RW-SEAS', 'STLM-AR', 'TBATS', 'THETA'):
 			continue
 
@@ -281,7 +285,6 @@ if True:# or not os.path.exists('cache.ckpt'):
 	for ifp_id in db:
 		db[ifp_id].sort(key=lambda x: x[0])
 
-	max_steps = max([len(v) for k, v in db.items()])
 	all_ifp = np.asarray(list(db.keys()))
 
 	kf = sklearn.model_selection.KFold(shuffle=True, n_splits=5, random_state=2019)
@@ -290,32 +293,20 @@ if True:# or not os.path.exists('cache.ckpt'):
 
 	ifp_train = folds[fold_index][0]
 	ifp_test = folds[fold_index][1]
+	print(ifp_train)
+	print(ifp_test)
 
 	#ifp_train = all_ifp
 	n_train = len(ifp_train)
 	n_test = len(ifp_test)
 
+	max_steps = max([len(v) for k, v in db.items()])
+	print('max_steps', max_steps)
+
 	special_symbol = {
 		'padding': 0,
 		'unknown': 1,
-		'Auto ARIMA': 2,
-		'M4-Meta': 3,
-		'Arithmetic RW': 4,
-		'DS-Holt': 5,
-		'DS-Holt-damped': 6,
-		'DS-RW': 7,
-		'DS-SES': 8,
-		'ETS': 9,
-		'Geometric RW': 10,
-		'M4-Comb': 11,
-		'Mean': 12,
-		'NNETAR': 13,
-		'RW': 14,
-		'RW-DRIFT': 15,
-		'RW-SEAS': 16,
-		'STLM-AR': 17,
-		'TBATS': 18,
-		'THETA': 19,
+		'Auto ARIMA': 2
 	}
 
 	id_counter = Counter()
@@ -474,6 +465,7 @@ weight_placeholder = tf.placeholder(tf.float32, [None])
 seq_length_placeholder = tf.placeholder(tf.int32, [None])
 gather_index_placeholder = tf.placeholder(tf.int32, [None, 2])
 num_option_mask_placeholder = tf.placeholder(tf.float32, [None, 5])
+n_forecast_placeholder = tf.placeholder(tf.int32, shape=())
 
 embedding = tf.get_variable('embedding', shape=(len(id2index), N_EMB_DIM), initializer=tf.random_uniform_initializer(-math.sqrt(3), math.sqrt(3)))
 embedded_features = tf.nn.embedding_lookup(embedding, id_placeholder)
@@ -490,10 +482,32 @@ cell_dropout = tf.contrib.rnn.DropoutWrapper(cell, input_keep_prob = input_keep_
 
 state_series, _ = tf.nn.dynamic_rnn(cell_dropout, combined_input, sequence_length=seq_length_placeholder, dtype=tf.float32, initial_state=zero_state)
 
-W1 = tf.get_variable('weight1', shape=(N_RNN_DIM, 5), initializer=tf.glorot_uniform_initializer())
-b1 = tf.get_variable('bias1', shape=(1, 5), initializer=tf.zeros_initializer())
+output = tf.TensorArray(dtype=tf.float32, size=n_forecast_placeholder, element_shape=(N_RNN_DIM, ))
+
+def compute(i, out):
+	index = gather_index_placeholder[i, 0]
+	seq_length = gather_index_placeholder[i, 1]
+
+	roi = state_series[index, :seq_length, :]
+	att = tf.nn.softmax(tf.matmul(roi, tf.transpose(roi)) / (N_RNN_DIM ** 0.5))
+
+	weighted_state = tf.reduce_sum(tf.matmul(att, roi), axis=0)
+	return i+1, out.write(i, weighted_state)
+
+_, out1 = tf.while_loop(
+	lambda a, c: a < n_forecast_placeholder,
+	compute,
+	(0, output)
+)
+
+att_state = out1.stack()
 needed_state = tf.gather_nd(state_series, gather_index_placeholder)
-prediction = tf.matmul(tf.nn.tanh(needed_state), W1) + b1
+combined_state = tf.concat([needed_state, att_state], 1)
+
+W1 = tf.get_variable('weight1', shape=(N_RNN_DIM * 2, 5), initializer=tf.glorot_uniform_initializer())
+b1 = tf.get_variable('bias1', shape=(1, 5), initializer=tf.zeros_initializer())
+
+prediction = tf.matmul(tf.nn.tanh(combined_state), W1) + b1
 prob = tf.nn.softmax(tf.math.add(prediction, num_option_mask_placeholder))
 loss_mse = tf.math.reduce_sum(tf.math.squared_difference(target_placeholder, prob), axis=1)
 
@@ -607,7 +621,8 @@ with tf.Session() as sess:
 					gather_index_placeholder: gather_index_train,
 					num_option_mask_placeholder: num_option_mask_train,
 					zero_state: train_zero_state,
-					is_training: True
+					is_training: True,
+					n_forecast_placeholder: n_forecast_train
 				}
 		)
 
@@ -625,7 +640,8 @@ with tf.Session() as sess:
 					gather_index_placeholder: gather_index_test,
 					num_option_mask_placeholder: num_option_mask_test,
 					zero_state: test_zero_state,
-					is_training: False
+					is_training: False,
+					n_forecast_placeholder: n_forecast_test
 				}
 		)
 
