@@ -522,8 +522,12 @@ n_forecast_placeholder = tf.placeholder(tf.int32, shape=())
 embedding = tf.get_variable('embedding', shape=(len(id2index), N_EMB_DIM), initializer=tf.random_uniform_initializer(-math.sqrt(3), math.sqrt(3)))
 embedded_features = tf.nn.embedding_lookup(embedding, id_placeholder)
 
+input_keep_prob = tf.cond(is_training, lambda:tf.constant(0.95), lambda:tf.constant(1.0))
+output_keep_prob = tf.cond(is_training, lambda:tf.constant(0.95), lambda:tf.constant(1.0))
+#state_keep_prob = tf.cond(is_training, lambda:tf.constant(0.95), lambda:tf.constant(1.0))
+
 #combined_input = input_placeholder
-combined_input = tf.concat([input_placeholder, embedded_features], 2)
+combined_input = tf.nn.dropout(tf.concat([input_placeholder, embedded_features], 2), keep_prob=input_keep_prob)
 q_filter = tf.get_variable('q_w', shape=(1, 5+N_EMB_DIM+n_feature, N_Q_DIM))
 q_output = tf.nn.conv1d(combined_input, q_filter, stride=1, padding='VALID')
 k_filter = tf.get_variable('k_w', shape=(1, 5+N_EMB_DIM+n_feature, N_K_DIM))
@@ -549,11 +553,8 @@ _, out1 = tf.while_loop(
 	(0, output)
 )
 
-needed_state = out1.stack()
+needed_state = tf.nn.dropout(out1.stack(), keep_prob=output_keep_prob)
 #pdb.set_trace()
-#input_keep_prob = tf.cond(is_training, lambda:tf.constant(0.95), lambda:tf.constant(1.0))
-#output_keep_prob = tf.cond(is_training, lambda:tf.constant(0.95), lambda:tf.constant(1.0))
-#state_keep_prob = tf.cond(is_training, lambda:tf.constant(0.95), lambda:tf.constant(1.0))
 #zero_state = tf.placeholder(tf.float32, [None, N_RNN_DIM])
 #cell = tf.nn.rnn_cell.GRUCell(N_RNN_DIM, kernel_initializer=tf.orthogonal_initializer(), bias_initializer=tf.zeros_initializer())
 #cell_dropout = tf.contrib.rnn.DropoutWrapper(cell, input_keep_prob = input_keep_prob, output_keep_prob = output_keep_prob, state_keep_prob = state_keep_prob)
