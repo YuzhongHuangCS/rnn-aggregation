@@ -28,7 +28,7 @@ for model in ('M0', 'M1', 'M2', 'M2 + feature', 'Transformer', 'RNN',):
 sns.set(style="whitegrid")
 df = pd.DataFrame.from_dict(db)
 ax = sns.violinplot(data=df, bw=0.1, cut=0, scale='count', inner='quartiles')
+plt.show()
 pdb.set_trace()
 #np.quantile(list(db['m0'].values()), 0.25)
-plt.show()
 print('OK')
