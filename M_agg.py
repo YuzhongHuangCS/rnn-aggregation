@@ -375,10 +375,9 @@ def M0_aggregation(test_input, db_dates,db_answer,fold_index):
 
 	ifps = test_input.keys()
 	results = {}
-	predictions = {}
+	predictions = {'score':[], 'true':[]}
 	for ifp in ifps:
 		results[ifp] = []
-		predictions[ifp] = []
 
 		dates = db_dates[ifp]
 		start_date = dates[0].replace(hour=0, minute=0, second=0, microsecond=0)
@@ -394,8 +393,11 @@ def M0_aggregation(test_input, db_dates,db_answer,fold_index):
 				score =  brier(pred, db_answer[ifp][0], ordered=db_answer[ifp][1])
 				results[ifp].append(score)
 
-				#probability of correct answer:
-				predictions[ifp].append(pred[db_answer[ifp][0]])
+				#probability 
+				predictions['score'] += pred
+				true_pred = list(np.zeros(len(pred)))
+				true_pred[db_answer[ifp][0]] = 1
+				predictions['true']+= true_pred
 
 
 				local_seconds = (day.replace(hour=0, minute=0, second=0, microsecond=0)-start_date).total_seconds()
@@ -421,10 +423,9 @@ def M1_aggregation(test_input, db_dates,db_answer,fold_index):
 
 	ifps = test_input.keys()
 	results = {}
-	predictions = {}
+	predictions = {'score':[], 'true':[]}
 	for ifp in ifps:
 		results[ifp] = []
-		predictions[ifp] = []
 
 		dates = db_dates[ifp]
 		start_date = dates[0].replace(hour=0, minute=0, second=0, microsecond=0)
@@ -439,8 +440,11 @@ def M1_aggregation(test_input, db_dates,db_answer,fold_index):
 				score =  brier(pred, db_answer[ifp][0], ordered=db_answer[ifp][1])
 				results[ifp].append(score)
 
-				#probability of correct answer:
-				predictions[ifp].append(pred[db_answer[ifp][0]])
+				#probability of correct answer: 
+				predictions['score'] += pred
+				true_pred = list(np.zeros(len(pred)))
+				true_pred[db_answer[ifp][0]] = 1
+				predictions['true']+= true_pred
 
 				local_seconds = (day.replace(hour=0, minute=0, second=0, microsecond=0)-start_date).total_seconds()
 				local_progress = int(np.around(100.0 * local_seconds / total_seconds))
@@ -472,10 +476,9 @@ def M2_aggregation(train_input,test_input, db_dates,db_answer,fold_index):
 
 	ifps = test_input.keys()
 	results = {}
-	predictions = {}
+	predictions = {'score':[], 'true':[]}
 	for ifp in ifps:
 		results[ifp] = []
-		predictions[ifp] = []
 
 		dates = db_dates[ifp]
 		start_date = dates[0].replace(hour=0, minute=0, second=0, microsecond=0)
@@ -494,7 +497,10 @@ def M2_aggregation(train_input,test_input, db_dates,db_answer,fold_index):
 				results[ifp].append(score)
 
 				#probability of correct answer:
-				predictions[ifp].append(pred[db_answer[ifp][0]])
+				predictions['score'] += pred
+				true_pred = list(np.zeros(len(pred)))
+				true_pred[db_answer[ifp][0]] = 1
+				predictions['true']+= true_pred
 
 				local_seconds = (day.replace(hour=0, minute=0, second=0, microsecond=0)-start_date).total_seconds()
 				local_progress = int(np.around(100.0 * local_seconds / total_seconds))

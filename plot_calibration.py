@@ -17,32 +17,28 @@ name_map = {
 }
 for model in ('M0', 'M1', 'M2'):
 	model_name = name_map[model]
-	for i in range(5):
+	for i in range(1):
 		filename = 'plot_data/{}_predictions_db_{}.pickle'.format(model_name, i)
 		with open(filename, 'rb') as fin:
-			db_pred= pickle.load(fin)
-			y_score = []
-			for key, value in db_pred.items():
-				y_score += value
+			db_pred = pickle.load(fin)
 			if model in db:
-				db[model] += y_score 
+				db[model].update(db_pred )
 			else:
-				db[model] = y_score
+				db[model] = db_pred
 
 sns.set(style="whitegrid")
-print(len(db['M0']))
-print(len(db['M1']))
-print(len(db['M2']))
+print(len(db['M0']['score']))
+print(len(db['M1']['score']))
+print(len(db['M2']['score']))
 
 
 def plot_calibration(db):
 	fig, ax = plt.subplots()
 	ax.plot([0, 1], [0, 1], "k:", label="Calibrated")
 	for model in ('M0', 'M1','M2'):
-		y_score = list(db[model])
-		y_true = list(np.ones(len(y_score))) + list(np.zeros(len(y_score)))
-		compl = [1.-x for x in y_score]
-		y_score += compl
+		y_score = db[model]['score']
+		y_true = db[model]['true']
+
 		fop, mpv = calibration_curve(y_true, y_score,  n_bins=10)
 		
 		ax.plot(mpv, fop, "s-",
@@ -60,10 +56,9 @@ def plot_roc_curve(db):
 	fig, ax = plt.subplots()
 	ax.plot([0, 1], [0, 1], "k:")
 	for model in ('M0', 'M1','M2'):
-		y_score = list(db[model])
-		y_true = list(np.ones(len(y_score))) + list(np.zeros(len(y_score)))
-		compl = [1.-x for x in y_score]
-		y_score += compl
+		y_score = db[model]['score']
+		y_true = db[model]['true']
+
 		fpr, tpr, _ = roc_curve(y_true, y_score)
 		roc_auc = roc_auc_score(y_true, y_score)
 
