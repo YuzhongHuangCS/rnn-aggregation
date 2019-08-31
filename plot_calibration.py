@@ -44,7 +44,8 @@ def plot_calibration(db):
 		ax.plot(mpv, fop, "s-",
              label="%s" % (model, ))
 
-	ax.set_ylabel("Fraction of positives")
+	ax.set_ylabel("Observed frequency")
+	ax.set_xlabel("Mean forecast")
 	ax.set_ylim([-0.05, 1.05])
 	ax.legend(loc="lower right")
 	ax.set_title('Calibration plots  (reliability curve)')
