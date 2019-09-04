@@ -109,6 +109,7 @@ ts_feature_rctc = pd.read_csv('data/ts_features_rctc.csv')
 tf_cols = ts_feature_rctc.columns.tolist()
 tf_cols.remove('ifp_id')
 tf_cols.remove('date')
+tf_cols.remove('ratio')
 if feature_used is not None:
 	for fu in feature_used:
 		if fu in ts_feature_list and fu in tf_cols:
@@ -311,6 +312,7 @@ is_4_train = np.zeros(n_forecast_train, dtype=bool)
 is_3_train = np.zeros(n_forecast_train, dtype=bool)
 weight_train = np.zeros(n_forecast_train)
 seq_length_train = np.zeros(n_train, dtype=int)
+seq_length_mask_train = np.full((n_train, max_steps, max_steps), -1e32)
 gather_index_train = np.zeros((n_forecast_train, 2), dtype=int)
 num_option_ary_train = np.zeros(n_forecast_train, dtype=int)
 num_option_mask_train = np.full((n_forecast_train, 5), -1e32)
@@ -336,6 +338,7 @@ for index, ifp in enumerate(ifp_train):
 	is_ordered_train[forecast_index:forecast_index+n_forecasts] = is_ordered
 	weight_train[forecast_index:forecast_index+n_forecasts] = ((1.0 / n_forecasts) / n_train) * n_forecast_train
 	seq_length_train[index] = len(forecasts)
+	seq_length_mask_train[index, :len(forecasts), :len(forecasts)] = 0
 
 	for i, forecast_date in enumerate(forecast_dates):
 		this_index = np.searchsorted(activity_dates, forecast_date)
@@ -372,6 +375,7 @@ is_4_valid = np.zeros(n_forecast_valid, dtype=bool)
 is_3_valid = np.zeros(n_forecast_valid, dtype=bool)
 weight_valid = np.zeros(n_forecast_valid)
 seq_length_valid = np.zeros(n_valid, dtype=int)
+seq_length_mask_valid = np.full((n_valid, max_steps, max_steps), -1e32)
 gather_index_valid = np.zeros((n_forecast_valid, 2), dtype=int)
 num_option_ary_valid = np.zeros(n_forecast_valid, dtype=int)
 num_option_mask_valid = np.full((n_forecast_valid, 5), -1e32)
@@ -397,6 +401,7 @@ for index, ifp in enumerate(ifp_valid):
 	is_ordered_valid[forecast_index:forecast_index+n_forecasts] = is_ordered
 	weight_valid[forecast_index:forecast_index+n_forecasts] = ((1.0 / n_forecasts) / n_valid) * n_forecast_valid
 	seq_length_valid[index] = len(forecasts)
+	seq_length_mask_valid[index, :len(forecasts), :len(forecasts)] = 0
 
 	for i, forecast_date in enumerate(forecast_dates):
 		this_index = np.searchsorted(activity_dates, forecast_date)
@@ -433,6 +438,7 @@ is_4_train_valid = np.zeros(n_forecast_train_valid, dtype=bool)
 is_3_train_valid = np.zeros(n_forecast_train_valid, dtype=bool)
 weight_train_valid = np.zeros(n_forecast_train_valid)
 seq_length_train_valid = np.zeros(n_train_valid, dtype=int)
+seq_length_mask_train_valid = np.full((n_train_valid, max_steps, max_steps), -1e32)
 gather_index_train_valid = np.zeros((n_forecast_train_valid, 2), dtype=int)
 num_option_ary_train_valid = np.zeros(n_forecast_train_valid, dtype=int)
 num_option_mask_train_valid = np.full((n_forecast_train_valid, 5), -1e32)
@@ -458,6 +464,7 @@ for index, ifp in enumerate(ifp_train_valid):
 	is_ordered_train_valid[forecast_index:forecast_index+n_forecasts] = is_ordered
 	weight_train_valid[forecast_index:forecast_index+n_forecasts] = ((1.0 / n_forecasts) / n_train_valid) * n_forecast_train_valid
 	seq_length_train_valid[index] = len(forecasts)
+	seq_length_mask_train_valid[index, :len(forecasts), :len(forecasts)] = 0
 
 	for i, forecast_date in enumerate(forecast_dates):
 		this_index = np.searchsorted(activity_dates, forecast_date)
@@ -494,6 +501,7 @@ is_4_test = np.zeros(n_forecast_test, dtype=bool)
 is_3_test = np.zeros(n_forecast_test, dtype=bool)
 weight_test = np.zeros(n_forecast_test)
 seq_length_test = np.zeros(n_test, dtype=int)
+seq_length_mask_test = np.full((n_test, max_steps, max_steps), -1e32)
 gather_index_test = np.zeros((n_forecast_test, 2), dtype=int)
 num_option_ary_test = np.zeros(n_forecast_test, dtype=int)
 num_option_mask_test = np.full((n_forecast_test, 5), -1e32)
@@ -520,6 +528,7 @@ for index, ifp in enumerate(ifp_test):
 	is_ordered_test[forecast_index:forecast_index+n_forecasts] = is_ordered
 	weight_test[forecast_index:forecast_index+n_forecasts] = ((1.0 / n_forecasts) / n_test) * n_forecast_test
 	seq_length_test[index] = len(forecasts)
+	seq_length_mask_test[index, :len(forecasts), :len(forecasts)] = 0
 
 	for i, forecast_date in enumerate(forecast_dates):
 		this_index = np.searchsorted(activity_dates, forecast_date)
@@ -553,6 +562,7 @@ is_4_placeholder = tf.placeholder(tf.bool, [None])
 is_3_placeholder = tf.placeholder(tf.bool, [None])
 weight_placeholder = tf.placeholder(tf.float32, [None])
 seq_length_placeholder = tf.placeholder(tf.int32, [None])
+seq_length_mask_placeholder = tf.placeholder(tf.float32, [None, max_steps, max_steps])
 gather_index_placeholder = tf.placeholder(tf.int32, [None, 2])
 num_option_mask_placeholder = tf.placeholder(tf.float32, [None, 5])
 
@@ -573,10 +583,9 @@ zero_state = tf.matmul(initial_state, W_emb) + b_emb
 state_series, _ = tf.nn.dynamic_rnn(cell_dropout, combined_input, sequence_length=seq_length_placeholder, initial_state=zero_state)
 #state_series, _ = tf.nn.dynamic_rnn(cell_dropout, combined_input, sequence_length=seq_length_placeholder, dtype=tf.float32)
 
-# Should use softmax according to original attention mechasim. But my experiment shows without softmax give better results.
-# Possible reason: 1. Without softmax allow negative weight for forecasts. 2. Without softmax ensure padding part get 0 attention score
-#att_scores = tf.nn.softmax(tf.matmul(state_series, tf.transpose(state_series, [0, 2, 1]))) / (N_RNN_DIM ** 0.5)
-att_scores = tf.matmul(state_series, tf.transpose(state_series, [0, 2, 1])) / (N_RNN_DIM ** 0.5)
+
+## attension score should be causal (lower triangle)
+att_scores = tf.nn.softmax(tf.linalg.band_part(tf.matmul(state_series, tf.transpose(state_series, [0, 2, 1])) / (N_RNN_DIM ** 0.5), -1, 0) + seq_length_mask_placeholder)
 att_state_series = tf.matmul(att_scores, state_series)
 
 W1 = tf.get_variable('weight1', shape=(N_RNN_DIM * 2, 5), initializer=tf.glorot_uniform_initializer())
@@ -692,6 +701,7 @@ with tf.Session() as sess:
 					is_3_placeholder: is_3_train,
 					weight_placeholder: weight_train,
 					seq_length_placeholder: seq_length_train,
+					seq_length_mask_placeholder: seq_length_mask_train,
 					gather_index_placeholder: gather_index_train,
 					num_option_mask_placeholder: num_option_mask_train,
 					initial_state: state_train,
@@ -710,6 +720,7 @@ with tf.Session() as sess:
 					is_3_placeholder: is_3_valid,
 					weight_placeholder: weight_valid,
 					seq_length_placeholder: seq_length_valid,
+					seq_length_mask_placeholder: seq_length_mask_valid,
 					gather_index_placeholder: gather_index_valid,
 					num_option_mask_placeholder: num_option_mask_valid,
 					initial_state: state_valid,
@@ -728,6 +739,7 @@ with tf.Session() as sess:
 					is_3_placeholder: is_3_test,
 					weight_placeholder: weight_test,
 					seq_length_placeholder: seq_length_test,
+					seq_length_mask_placeholder: seq_length_mask_test,
 					gather_index_placeholder: gather_index_test,
 					num_option_mask_placeholder: num_option_mask_test,
 					initial_state: state_test,
@@ -795,6 +807,7 @@ with tf.Session() as sess:
 				is_3_placeholder: is_3_train_valid,
 				weight_placeholder: weight_train_valid,
 				seq_length_placeholder: seq_length_train_valid,
+				seq_length_mask_placeholder: seq_length_mask_train_valid,
 				gather_index_placeholder: gather_index_train_valid,
 				num_option_mask_placeholder: num_option_mask_train_valid,
 				initial_state: state_train_valid,
@@ -819,6 +832,7 @@ with tf.Session() as sess:
 					is_3_placeholder: is_3_train_valid,
 					weight_placeholder: weight_train_valid,
 					seq_length_placeholder: seq_length_train_valid,
+					seq_length_mask_placeholder: seq_length_mask_train_valid,
 					gather_index_placeholder: gather_index_train_valid,
 					num_option_mask_placeholder: num_option_mask_train_valid,
 					initial_state: state_train_valid,
@@ -837,6 +851,7 @@ with tf.Session() as sess:
 					is_3_placeholder: is_3_test,
 					weight_placeholder: weight_test,
 					seq_length_placeholder: seq_length_test,
+					seq_length_mask_placeholder: seq_length_mask_test,
 					gather_index_placeholder: gather_index_test,
 					num_option_mask_placeholder: num_option_mask_test,
 					initial_state: state_test,
