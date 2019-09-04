@@ -583,9 +583,9 @@ zero_state = tf.matmul(initial_state, W_emb) + b_emb
 state_series, _ = tf.nn.dynamic_rnn(cell_dropout, combined_input, sequence_length=seq_length_placeholder, initial_state=zero_state)
 #state_series, _ = tf.nn.dynamic_rnn(cell_dropout, combined_input, sequence_length=seq_length_placeholder, dtype=tf.float32)
 
-
 ## attension score should be causal (lower triangle)
-att_scores = tf.nn.softmax(tf.linalg.band_part(tf.matmul(state_series, tf.transpose(state_series, [0, 2, 1])) / (N_RNN_DIM ** 0.5), -1, 0) + seq_length_mask_placeholder)
+upper_triangle = tf.linalg.band_part(tf.constant(-1e32, shape=(max_steps, max_steps)), 0, -1)
+att_scores = tf.nn.softmax(tf.linalg.band_part(tf.matmul(state_series, tf.transpose(state_series, [0, 2, 1])) / (N_RNN_DIM ** 0.5), -1, 0) + upper_triangle + seq_length_mask_placeholder)
 att_state_series = tf.matmul(att_scores, state_series)
 
 W1 = tf.get_variable('weight1', shape=(N_RNN_DIM * 2, 5), initializer=tf.glorot_uniform_initializer())
@@ -595,7 +595,7 @@ combined_state_series = tf.concat([state_series, att_state_series], 2)
 needed_state = tf.gather_nd(combined_state_series, gather_index_placeholder)
 
 prediction = tf.matmul(tf.nn.tanh(needed_state), W1) + b1
-prob = tf.nn.softmax(tf.math.add(prediction, num_option_mask_placeholder))
+prob = tf.nn.softmax(prediction + num_option_mask_placeholder)
 loss_mse = tf.math.reduce_sum(tf.math.squared_difference(target_placeholder, prob), axis=1)
 
 prob_1 = tf.stack([tf.reduce_sum(tf.gather(prob, [0], axis=1), axis=1), tf.reduce_sum(tf.gather(prob, [1, 2, 3, 4], axis=1), axis=1)], axis=1)
