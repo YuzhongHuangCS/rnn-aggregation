@@ -29,7 +29,7 @@ if len(sys.argv) >= 3:
 	fold_index = int(sys.argv[2])
 	feature_used = sys.argv[3:]
 else:
-	model_name = 'rnn_model'
+	model_name = 'att_model'
 	fold_index = 0
 	feature_used = ['None', ]
 
@@ -88,14 +88,11 @@ for filename in ('data/dump_questions_rcta.csv', 'data/dump_questions_rctb.csv',
 				pdb.set_trace()
 				print(e)
 
-human_feature_list = ['n_forecasts_te', 'variance_sage', 'n_forecasts_d', 'n_forecasts_sage', 'entropy_b', 'entropy_d', 'entropy_te', 'n_forecasts_b', 'entropy_c', 'Technology', 'variance_b', 'variance_d', 'Other', 'n_forecasts_c', 'stage', 'entropy_sage', 'n_forecasts', 'Politics/Intl Relations', 'Macroeconomics/Finance', 'variance_te', 'variance_c', 'variance_human', 'entropy_human', 'ordinal', 'Natural Sciences/Climate']
+human_feature_list = ['n_forecasts_te', 'variance_sage', 'n_forecasts_d', 'n_forecasts_sage', 'entropy_b', 'entropy_d', 'entropy_te', 'n_forecasts_b', 'entropy_c', 'Technology', 'variance_b', 'variance_d', 'Other', 'n_forecasts_c', 'stage', 'entropy_sage', 'n_forecasts', 'Politics/Intl Relations', 'Macroeconomics/Finance', 'Health/Disease', 'variance_te', 'variance_c', 'variance_human', 'entropy_human', 'ordinal', 'Natural Sciences/Climate', 'p_updates']
 human_feature = pd.read_csv('data/human_features.csv').drop_duplicates(subset=['date', 'ifp_id'], keep='last')
 hf_cols = human_feature.columns.tolist()
 hf_cols.remove('ifp_id')
 hf_cols.remove('date')
-hf_cols.remove('p_updates')
-hf_cols.remove('Health/Disease')
-
 if feature_used is not None:
 	for fu in feature_used:
 		if fu in human_feature_list and fu in hf_cols:
@@ -109,7 +106,6 @@ ts_feature_rctc = pd.read_csv('data/ts_features_rctc.csv')
 tf_cols = ts_feature_rctc.columns.tolist()
 tf_cols.remove('ifp_id')
 tf_cols.remove('date')
-tf_cols.remove('ratio')
 if feature_used is not None:
 	for fu in feature_used:
 		if fu in ts_feature_list and fu in tf_cols:
@@ -283,7 +279,10 @@ print('n_train_valid', n_train_valid)
 print('n_valid', n_valid)
 print('n_test', n_test)
 
-N_RNN_DIM = 32
+N_Q_DIM = 32
+N_K_DIM = 32
+N_V_DIM = 32
+N_WORD2VEC_DIM = 32
 N_EMB_DIM = 8
 
 special_symbol = {
@@ -305,14 +304,13 @@ n_forecast_train = sum([len(v) for k, v in db_dates.items() if k in ifp_train])
 
 input_train = np.zeros((n_train, max_steps, 5 + n_feature))
 id_train = np.zeros((n_train, max_steps), dtype=int)
-state_train = np.zeros((n_train, 300))
+state_train = np.zeros((n_forecast_train, 300))
 target_train = np.zeros((n_forecast_train, 5))
 answer_train = np.zeros(n_forecast_train, dtype=int)
 is_ordered_train = np.zeros(n_forecast_train, dtype=bool)
 is_4_train = np.zeros(n_forecast_train, dtype=bool)
 is_3_train = np.zeros(n_forecast_train, dtype=bool)
 weight_train = np.zeros(n_forecast_train)
-seq_length_train = np.zeros(n_train, dtype=int)
 seq_length_mask_train = np.full((n_train, max_steps, max_steps), -1e32)
 gather_index_train = np.zeros((n_forecast_train, 2), dtype=int)
 num_option_ary_train = np.zeros(n_forecast_train, dtype=int)
@@ -328,7 +326,6 @@ for index, ifp in enumerate(ifp_train):
 		forecaster_id = id2index.get(forecast[1], 1)
 		id_train[index, i] = forecaster_id
 
-	state_train[index] = db_emb[ifp]
 	forecast_dates = db_dates[ifp]
 	n_forecasts = len(forecast_dates)
 	activity_dates = [x[0] for x in forecasts]
@@ -338,7 +335,7 @@ for index, ifp in enumerate(ifp_train):
 	answer_train[forecast_index:forecast_index+n_forecasts] = answer
 	is_ordered_train[forecast_index:forecast_index+n_forecasts] = is_ordered
 	weight_train[forecast_index:forecast_index+n_forecasts] = ((1.0 / n_forecasts) / n_train) * n_forecast_train
-	seq_length_train[index] = len(forecasts)
+	state_train[forecast_index:forecast_index+n_forecasts] = db_emb[ifp]
 	seq_length_mask_train[index, :len(forecasts), :len(forecasts)] = 0
 
 	for i, forecast_date in enumerate(forecast_dates):
@@ -368,14 +365,13 @@ n_forecast_valid = sum([len(v) for k, v in db_dates.items() if k in ifp_valid])
 
 input_valid = np.zeros((n_valid, max_steps, 5 + n_feature))
 id_valid = np.zeros((n_valid, max_steps), dtype=int)
-state_valid = np.zeros((n_valid, 300))
+state_valid = np.zeros((n_forecast_valid, 300))
 target_valid = np.zeros((n_forecast_valid, 5))
 answer_valid = np.zeros(n_forecast_valid, dtype=int)
 is_ordered_valid = np.zeros(n_forecast_valid, dtype=bool)
 is_4_valid = np.zeros(n_forecast_valid, dtype=bool)
 is_3_valid = np.zeros(n_forecast_valid, dtype=bool)
 weight_valid = np.zeros(n_forecast_valid)
-seq_length_valid = np.zeros(n_valid, dtype=int)
 seq_length_mask_valid = np.full((n_valid, max_steps, max_steps), -1e32)
 gather_index_valid = np.zeros((n_forecast_valid, 2), dtype=int)
 num_option_ary_valid = np.zeros(n_forecast_valid, dtype=int)
@@ -391,7 +387,6 @@ for index, ifp in enumerate(ifp_valid):
 		forecaster_id = id2index.get(forecast[1], 1)
 		id_valid[index, i] = forecaster_id
 
-	state_valid[index] = db_emb[ifp]
 	forecast_dates = db_dates[ifp]
 	n_forecasts = len(forecast_dates)
 	activity_dates = [x[0] for x in forecasts]
@@ -401,7 +396,7 @@ for index, ifp in enumerate(ifp_valid):
 	answer_valid[forecast_index:forecast_index+n_forecasts] = answer
 	is_ordered_valid[forecast_index:forecast_index+n_forecasts] = is_ordered
 	weight_valid[forecast_index:forecast_index+n_forecasts] = ((1.0 / n_forecasts) / n_valid) * n_forecast_valid
-	seq_length_valid[index] = len(forecasts)
+	state_valid[forecast_index:forecast_index+n_forecasts] = db_emb[ifp]
 	seq_length_mask_valid[index, :len(forecasts), :len(forecasts)] = 0
 
 	for i, forecast_date in enumerate(forecast_dates):
@@ -431,14 +426,13 @@ n_forecast_train_valid = sum([len(v) for k, v in db_dates.items() if k in ifp_tr
 
 input_train_valid = np.zeros((n_train_valid, max_steps, 5 + n_feature))
 id_train_valid = np.zeros((n_train_valid, max_steps), dtype=int)
-state_train_valid = np.zeros((n_train_valid, 300))
+state_train_valid = np.zeros((n_forecast_train_valid, 300))
 target_train_valid = np.zeros((n_forecast_train_valid, 5))
 answer_train_valid = np.zeros(n_forecast_train_valid, dtype=int)
 is_ordered_train_valid = np.zeros(n_forecast_train_valid, dtype=bool)
 is_4_train_valid = np.zeros(n_forecast_train_valid, dtype=bool)
 is_3_train_valid = np.zeros(n_forecast_train_valid, dtype=bool)
 weight_train_valid = np.zeros(n_forecast_train_valid)
-seq_length_train_valid = np.zeros(n_train_valid, dtype=int)
 seq_length_mask_train_valid = np.full((n_train_valid, max_steps, max_steps), -1e32)
 gather_index_train_valid = np.zeros((n_forecast_train_valid, 2), dtype=int)
 num_option_ary_train_valid = np.zeros(n_forecast_train_valid, dtype=int)
@@ -454,7 +448,6 @@ for index, ifp in enumerate(ifp_train_valid):
 		forecaster_id = id2index.get(forecast[1], 1)
 		id_train_valid[index, i] = forecaster_id
 
-	state_train_valid[index] = db_emb[ifp]
 	forecast_dates = db_dates[ifp]
 	n_forecasts = len(forecast_dates)
 	activity_dates = [x[0] for x in forecasts]
@@ -464,7 +457,7 @@ for index, ifp in enumerate(ifp_train_valid):
 	answer_train_valid[forecast_index:forecast_index+n_forecasts] = answer
 	is_ordered_train_valid[forecast_index:forecast_index+n_forecasts] = is_ordered
 	weight_train_valid[forecast_index:forecast_index+n_forecasts] = ((1.0 / n_forecasts) / n_train_valid) * n_forecast_train_valid
-	seq_length_train_valid[index] = len(forecasts)
+	state_train_valid[forecast_index:forecast_index+n_forecasts] = db_emb[ifp]
 	seq_length_mask_train_valid[index, :len(forecasts), :len(forecasts)] = 0
 
 	for i, forecast_date in enumerate(forecast_dates):
@@ -494,14 +487,13 @@ n_forecast_test = sum([len(v) for k, v in db_dates.items() if k in ifp_test])
 
 input_test = np.zeros((n_test, max_steps, 5 + n_feature))
 id_test = np.zeros((n_test, max_steps), dtype=int)
-state_test = np.zeros((n_test, 300))
+state_test = np.zeros((n_forecast_test, 300))
 target_test = np.zeros((n_forecast_test, 5))
 answer_test = np.zeros(n_forecast_test, dtype=int)
 is_ordered_test = np.zeros(n_forecast_test, dtype=bool)
 is_4_test = np.zeros(n_forecast_test, dtype=bool)
 is_3_test = np.zeros(n_forecast_test, dtype=bool)
 weight_test = np.zeros(n_forecast_test)
-seq_length_test = np.zeros(n_test, dtype=int)
 seq_length_mask_test = np.full((n_test, max_steps, max_steps), -1e32)
 gather_index_test = np.zeros((n_forecast_test, 2), dtype=int)
 num_option_ary_test = np.zeros(n_forecast_test, dtype=int)
@@ -514,11 +506,9 @@ for index, ifp in enumerate(ifp_test):
 
 	for i, forecast in enumerate(forecasts):
 		input_test[index, i] = forecast[4:]
-
 		forecaster_id = id2index.get(forecast[1], 1)
 		id_test[index, i] = forecaster_id
 
-	state_test[index] = db_emb[ifp]
 	forecast_dates = db_dates[ifp]
 	n_forecasts = len(forecast_dates)
 	activity_dates = [x[0] for x in forecasts]
@@ -528,7 +518,7 @@ for index, ifp in enumerate(ifp_test):
 	answer_test[forecast_index:forecast_index+n_forecasts] = answer
 	is_ordered_test[forecast_index:forecast_index+n_forecasts] = is_ordered
 	weight_test[forecast_index:forecast_index+n_forecasts] = ((1.0 / n_forecasts) / n_test) * n_forecast_test
-	seq_length_test[index] = len(forecasts)
+	state_test[forecast_index:forecast_index+n_forecasts] = db_emb[ifp]
 	seq_length_mask_test[index, :len(forecasts), :len(forecasts)] = 0
 
 	for i, forecast_date in enumerate(forecast_dates):
@@ -562,41 +552,53 @@ is_ordered_placeholder = tf.placeholder(tf.bool, [None])
 is_4_placeholder = tf.placeholder(tf.bool, [None])
 is_3_placeholder = tf.placeholder(tf.bool, [None])
 weight_placeholder = tf.placeholder(tf.float32, [None])
-seq_length_placeholder = tf.placeholder(tf.int32, [None])
 seq_length_mask_placeholder = tf.placeholder(tf.float32, [None, max_steps, max_steps])
 gather_index_placeholder = tf.placeholder(tf.int32, [None, 2])
 num_option_mask_placeholder = tf.placeholder(tf.float32, [None, 5])
 
-embedding = tf.get_variable('embedding', shape=(len(id2index), N_EMB_DIM), initializer=tf.random_uniform_initializer(-math.sqrt(3), math.sqrt(3)))
-embedded_features = tf.nn.embedding_lookup(embedding, id_placeholder)
-combined_input = tf.concat([input_placeholder, embedded_features], 2)
-
-cell = tf.nn.rnn_cell.GRUCell(N_RNN_DIM, kernel_initializer=tf.orthogonal_initializer(), bias_initializer=tf.zeros_initializer())
 input_keep_prob = tf.cond(is_training, lambda:tf.constant(0.9), lambda:tf.constant(1.0))
 output_keep_prob = tf.cond(is_training, lambda:tf.constant(0.9), lambda:tf.constant(1.0))
 state_keep_prob = tf.cond(is_training, lambda:tf.constant(0.9), lambda:tf.constant(1.0))
-cell_dropout = tf.contrib.rnn.DropoutWrapper(cell, input_keep_prob = input_keep_prob, output_keep_prob = output_keep_prob, state_keep_prob = state_keep_prob)
+
+embedding = tf.get_variable('embedding', shape=(len(id2index), N_EMB_DIM), initializer=tf.random_uniform_initializer(-math.sqrt(3), math.sqrt(3)))
+embedded_features = tf.nn.embedding_lookup(embedding, id_placeholder)
+combined_input = tf.nn.dropout(tf.concat([input_placeholder, embedded_features], 2), keep_prob=input_keep_prob)
+
+upper_triangle = tf.linalg.band_part(tf.constant(-1e32, shape=(max_steps, max_steps)), 0, -1)
+
+q_filter = tf.get_variable('q_w', shape=(1, 5+N_EMB_DIM+n_feature, N_Q_DIM))
+q_output = tf.nn.conv1d(combined_input, q_filter, stride=1, padding='VALID')
+k_filter = tf.get_variable('k_w', shape=(1, 5+N_EMB_DIM+n_feature, N_K_DIM))
+k_output = tf.nn.conv1d(combined_input, k_filter, stride=1, padding='VALID')
+v_filter = tf.get_variable('v_w', shape=(1, 5+N_EMB_DIM+n_feature, N_V_DIM))
+v_output = tf.nn.conv1d(combined_input, v_filter, stride=1, padding='VALID')
+
+att_scores = tf.nn.softmax(tf.linalg.band_part(tf.matmul(q_output, tf.transpose(k_output, [0, 2, 1])) / (N_K_DIM ** 0.5), -1, 0) + upper_triangle + seq_length_mask_placeholder)
+att_state_series = tf.nn.dropout(tf.matmul(att_scores, v_output), keep_prob=state_keep_prob)
+
+q_filter2 = tf.get_variable('q_w2', shape=(1, N_Q_DIM, N_Q_DIM))
+q_output2 = tf.nn.conv1d(att_state_series, q_filter2, stride=1, padding='VALID')
+k_filter2 = tf.get_variable('k_w2', shape=(1, N_K_DIM, N_K_DIM))
+k_output2 = tf.nn.conv1d(att_state_series, k_filter2, stride=1, padding='VALID')
+v_filter2 = tf.get_variable('v_w2', shape=(1, N_K_DIM, N_V_DIM))
+v_output2 = tf.nn.conv1d(att_state_series, v_filter2, stride=1, padding='VALID')
+
+att_scores2 = tf.nn.softmax(tf.linalg.band_part(tf.matmul(q_output2, tf.transpose(k_output2, [0, 2, 1])) / (N_K_DIM ** 0.5), -1, 0) + upper_triangle + seq_length_mask_placeholder)
+att_state_series2 =tf.nn.dropout(tf.matmul(att_scores2, v_output2), keep_prob=output_keep_prob)
+
 initial_state = tf.placeholder(tf.float32, [None, 300])
-W_emb = tf.get_variable('embedding_weight', shape=(300, N_RNN_DIM), initializer=tf.glorot_uniform_initializer())
-b_emb = tf.get_variable('embedding_bias', shape=(1, N_RNN_DIM), initializer=tf.zeros_initializer())
+W_emb = tf.get_variable('embedding_weight', shape=(300, N_WORD2VEC_DIM), initializer=tf.glorot_uniform_initializer())
+b_emb = tf.get_variable('embedding_bias', shape=(1, N_WORD2VEC_DIM), initializer=tf.zeros_initializer())
 zero_state = tf.matmul(initial_state, W_emb) + b_emb
 
-state_series, _ = tf.nn.dynamic_rnn(cell_dropout, combined_input, sequence_length=seq_length_placeholder, initial_state=zero_state)
-#state_series, _ = tf.nn.dynamic_rnn(cell_dropout, combined_input, sequence_length=seq_length_placeholder, dtype=tf.float32)
+needed_state = tf.gather_nd(att_state_series2, gather_index_placeholder)
+combined_state = tf.concat([needed_state, zero_state], 1)
 
-## attension score should be causal (lower triangle)
-upper_triangle = tf.linalg.band_part(tf.constant(-1e32, shape=(max_steps, max_steps)), 0, -1)
-att_scores = tf.nn.softmax(tf.linalg.band_part(tf.matmul(state_series, tf.transpose(state_series, [0, 2, 1])) / (N_RNN_DIM ** 0.5), -1, 0) + upper_triangle + seq_length_mask_placeholder)
-att_state_series = tf.matmul(att_scores, state_series)
-
-W1 = tf.get_variable('weight1', shape=(N_RNN_DIM * 2, 5), initializer=tf.glorot_uniform_initializer())
+W1 = tf.get_variable('weight1', shape=(N_V_DIM + N_WORD2VEC_DIM, 5), initializer=tf.glorot_uniform_initializer())
 b1 = tf.get_variable('bias1', shape=(1, 5), initializer=tf.zeros_initializer())
-
-combined_state_series = tf.concat([state_series, att_state_series], 2)
-needed_state = tf.gather_nd(combined_state_series, gather_index_placeholder)
-
-prediction = tf.matmul(tf.nn.tanh(needed_state), W1) + b1
+prediction = tf.matmul(tf.nn.tanh(combined_state), W1) + b1
 prob = tf.nn.softmax(prediction + num_option_mask_placeholder)
+
 loss_mse = tf.math.reduce_sum(tf.math.squared_difference(target_placeholder, prob), axis=1)
 
 prob_1 = tf.stack([tf.reduce_sum(tf.gather(prob, [0], axis=1), axis=1), tf.reduce_sum(tf.gather(prob, [1, 2, 3, 4], axis=1), axis=1)], axis=1)
@@ -647,6 +649,7 @@ loss_combined = tf.where(is_ordered_placeholder, tf.where(is_4_placeholder, loss
 
 loss_weighted = tf.losses.compute_weighted_loss(loss_combined, weight_placeholder)
 
+
 loss_weighted_reg = loss_weighted
 variables = [v for v in tf.trainable_variables()]
 
@@ -690,7 +693,7 @@ with tf.Session() as sess:
 			ops.append(tf.assign(tf_vars[i_tf], smallest_weight[i_tf]))
 		sess.run(ops)
 
-	for i in range(50):
+	for i in range(100):
 		train_loss, train_pred, _train_step = sess.run(
 			[loss_weighted, prob, train_op],
 				feed_dict={
@@ -701,7 +704,6 @@ with tf.Session() as sess:
 					is_4_placeholder: is_4_train,
 					is_3_placeholder: is_3_train,
 					weight_placeholder: weight_train,
-					seq_length_placeholder: seq_length_train,
 					seq_length_mask_placeholder: seq_length_mask_train,
 					gather_index_placeholder: gather_index_train,
 					num_option_mask_placeholder: num_option_mask_train,
@@ -720,7 +722,6 @@ with tf.Session() as sess:
 					is_4_placeholder: is_4_valid,
 					is_3_placeholder: is_3_valid,
 					weight_placeholder: weight_valid,
-					seq_length_placeholder: seq_length_valid,
 					seq_length_mask_placeholder: seq_length_mask_valid,
 					gather_index_placeholder: gather_index_valid,
 					num_option_mask_placeholder: num_option_mask_valid,
@@ -739,7 +740,6 @@ with tf.Session() as sess:
 					is_4_placeholder: is_4_test,
 					is_3_placeholder: is_3_test,
 					weight_placeholder: weight_test,
-					seq_length_placeholder: seq_length_test,
 					seq_length_mask_placeholder: seq_length_mask_test,
 					gather_index_placeholder: gather_index_test,
 					num_option_mask_placeholder: num_option_mask_test,
@@ -807,7 +807,6 @@ with tf.Session() as sess:
 				is_4_placeholder: is_4_train_valid,
 				is_3_placeholder: is_3_train_valid,
 				weight_placeholder: weight_train_valid,
-				seq_length_placeholder: seq_length_train_valid,
 				seq_length_mask_placeholder: seq_length_mask_train_valid,
 				gather_index_placeholder: gather_index_train_valid,
 				num_option_mask_placeholder: num_option_mask_train_valid,
@@ -818,7 +817,7 @@ with tf.Session() as sess:
 
 	print('Smallest train loss: {}, current train valid loss: {}'.format(smallest_train_loss, train_valid_loss))
 
-	for i in range(50):
+	for i in range(100):
 		if train_valid_loss < smallest_train_loss:
 			break
 
@@ -832,7 +831,6 @@ with tf.Session() as sess:
 					is_4_placeholder: is_4_train_valid,
 					is_3_placeholder: is_3_train_valid,
 					weight_placeholder: weight_train_valid,
-					seq_length_placeholder: seq_length_train_valid,
 					seq_length_mask_placeholder: seq_length_mask_train_valid,
 					gather_index_placeholder: gather_index_train_valid,
 					num_option_mask_placeholder: num_option_mask_train_valid,
@@ -851,7 +849,6 @@ with tf.Session() as sess:
 					is_4_placeholder: is_4_test,
 					is_3_placeholder: is_3_test,
 					weight_placeholder: weight_test,
-					seq_length_placeholder: seq_length_test,
 					seq_length_mask_placeholder: seq_length_mask_test,
 					gather_index_placeholder: gather_index_test,
 					num_option_mask_placeholder: num_option_mask_test,
