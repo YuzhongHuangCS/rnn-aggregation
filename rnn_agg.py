@@ -25,11 +25,13 @@ from nltk.tokenize import word_tokenize
 from utils import is_ordered, initialize_embedding, embedding_lookup
 
 if len(sys.argv) >= 3:
-	fold_index = int(sys.argv[1])
-	feature_used = sys.argv[2:]
+	model_name = sys.argv[1]
+	fold_index = int(sys.argv[2])
+	feature_used = sys.argv[3:]
 else:
+	model_name = 'rnn_model'
 	fold_index = 0
-	feature_used = None
+	feature_used = ['None', ]
 
 print('fold_index: {}'.format(fold_index))
 print('feature_used: {}'.format(feature_used))
@@ -86,11 +88,14 @@ for filename in ('data/dump_questions_rcta.csv', 'data/dump_questions_rctb.csv',
 				pdb.set_trace()
 				print(e)
 
-human_feature_list = ['n_forecasts_te', 'variance_sage', 'n_forecasts_d', 'n_forecasts_sage', 'entropy_b', 'entropy_d', 'entropy_te', 'n_forecasts_b', 'entropy_c', 'Technology', 'variance_b', 'variance_d', 'Other', 'n_forecasts_c', 'stage', 'entropy_sage', 'n_forecasts', 'Politics/Intl Relations', 'Macroeconomics/Finance', 'Health/Disease', 'variance_te', 'variance_c', 'variance_human', 'entropy_human', 'ordinal', 'Natural Sciences/Climate', 'p_updates']
+human_feature_list = ['n_forecasts_te', 'variance_sage', 'n_forecasts_d', 'n_forecasts_sage', 'entropy_b', 'entropy_d', 'entropy_te', 'n_forecasts_b', 'entropy_c', 'Technology', 'variance_b', 'variance_d', 'Other', 'n_forecasts_c', 'stage', 'entropy_sage', 'n_forecasts', 'Politics/Intl Relations', 'Macroeconomics/Finance', 'variance_te', 'variance_c', 'variance_human', 'entropy_human', 'ordinal', 'Natural Sciences/Climate']
 human_feature = pd.read_csv('data/human_features.csv').drop_duplicates(subset=['date', 'ifp_id'], keep='last')
 hf_cols = human_feature.columns.tolist()
 hf_cols.remove('ifp_id')
 hf_cols.remove('date')
+hf_cols.remove('p_updates')
+hf_cols.remove('Health/Disease')
+
 if feature_used is not None:
 	for fu in feature_used:
 		if fu in human_feature_list and fu in hf_cols:
@@ -568,9 +573,9 @@ zero_state = tf.matmul(initial_state, W_emb) + b_emb
 state_series, _ = tf.nn.dynamic_rnn(cell_dropout, combined_input, sequence_length=seq_length_placeholder, initial_state=zero_state)
 #state_series, _ = tf.nn.dynamic_rnn(cell_dropout, combined_input, sequence_length=seq_length_placeholder, dtype=tf.float32)
 
-# Should use softmax according to original attention mechasim. But in our experiment without softmax give better results.
+# Should use softmax according to original attention mechasim. But my experiment shows without softmax give better results.
 # Possible reason: 1. Without softmax allow negative weight for forecasts. 2. Without softmax ensure padding part get 0 attention score
-#att_scores = tf.nn.softmax(tf.matmul(state_series, tf.transpose(state_series, [0, 2, 1])) / (N_RNN_DIM ** 0.5))
+#att_scores = tf.nn.softmax(tf.matmul(state_series, tf.transpose(state_series, [0, 2, 1]))) / (N_RNN_DIM ** 0.5)
 att_scores = tf.matmul(state_series, tf.transpose(state_series, [0, 2, 1])) / (N_RNN_DIM ** 0.5)
 att_state_series = tf.matmul(att_scores, state_series)
 
@@ -645,6 +650,11 @@ optimizer = tf.train.AdamOptimizer(lr)
 gradients, variables = zip(*optimizer.compute_gradients(loss_weighted_reg))
 gradients, _ = tf.clip_by_global_norm(gradients, 5.0)
 train_op = optimizer.apply_gradients(zip(gradients, variables))
+
+saver = tf.train.Saver()
+save_dir = '{}/{}/{}'.format(model_name, '_'.join(feature_used).replace('/', '_').replace(' ', '_'), fold_index)
+os.makedirs(save_dir, exist_ok=True)
+save_path = save_dir + '/model.ckpt'
 
 with tf.Session() as sess:
 	sess.run(tf.global_variables_initializer())
@@ -837,12 +847,13 @@ with tf.Session() as sess:
 		print('Fine tune Epoch: {}, train loss: {}, test loss: {}'.format(i, train_valid_loss, test_loss))
 
 
-	def save_model(filename):
-		with open(filename, 'wb') as fout:
-			pickle.dump(smallest_weight, fout, pickle.HIGHEST_PROTOCOL)
+	_save_weight()
+	print('final test loss', test_loss)
 
-	print('test loss', test_loss)
-	pdb.set_trace()
+	with open(save_path.replace('.ckpt', '.pickle'), 'wb') as fout:
+		pickle.dump(smallest_weight, fout, pickle.HIGHEST_PROTOCOL)
+
+	saver.save(sess, save_path)
 	print('Before exit')
 
 print('OK')
