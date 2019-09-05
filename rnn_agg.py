@@ -274,8 +274,8 @@ n_test = len(ifp_test)
 
 n_train = int(n_train_valid*0.9)
 n_valid = n_train_valid - n_train
-ifp_train = ifp_train_valid[:n_train]
-ifp_valid = ifp_train_valid[n_train:]
+ifp_train = ifp_train_valid[n_valid:]
+ifp_valid = ifp_train_valid[:n_valid]
 
 print('max_steps', max_steps)
 print('n_train', n_train)
@@ -582,7 +582,6 @@ b_emb = tf.get_variable('embedding_bias', shape=(1, N_RNN_DIM), initializer=tf.z
 zero_state = tf.matmul(initial_state, W_emb) + b_emb
 
 state_series, _ = tf.nn.dynamic_rnn(cell_dropout, combined_input, sequence_length=seq_length_placeholder, initial_state=zero_state)
-#state_series, _ = tf.nn.dynamic_rnn(cell_dropout, combined_input, sequence_length=seq_length_placeholder, dtype=tf.float32)
 
 ## attension score should be causal (lower triangle)
 upper_triangle = tf.linalg.band_part(tf.constant(-1e32, shape=(max_steps, max_steps)), 0, -1)
@@ -642,7 +641,6 @@ loss_3_2 = tf.math.reduce_sum(tf.math.squared_difference(prob_3_2, true_3_2), ax
 
 loss_brier_3 = tf.math.reduce_mean(tf.stack([loss_3_1, loss_3_2], axis=1), axis=1)
 
-#loss_combined = tf.where(is_ordered_placeholder, loss_brier, loss_mse)
 loss_combined = tf.where(is_ordered_placeholder, tf.where(is_4_placeholder, loss_brier_4, tf.where(is_3_placeholder, loss_brier_3, loss_brier)), loss_mse)
 
 loss_weighted = tf.losses.compute_weighted_loss(loss_combined, weight_placeholder)
