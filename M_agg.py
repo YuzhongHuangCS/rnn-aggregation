@@ -74,6 +74,7 @@ if True or not os.path.exists('cache.ckpt'):
 
 
 	db = defaultdict(list)
+	df_ary = []
 	for filename in ('data/dump_user_forecasts_rcta.csv', 'data/dump_user_forecasts_rctb.csv', 'data/dump_user_forecasts_rctc.csv'):
 		df = pd.read_csv(filename)
 		for index, row in df.iterrows():
@@ -103,6 +104,7 @@ if True or not os.path.exists('cache.ckpt'):
 			if num_options == 1:
 				num_options = 2
 
+			df_ary.append([ifp_id, user_id])
 			db[ifp_id].append([date,'human',user_id,ifp_id,num_options,option_1,option_2,option_3,option_4,option_5])
 
 	machine_df = pd.read_csv('data/machine_all.csv').drop_duplicates(subset=['date', 'machine_model', 'ifp_id'], keep='last')
@@ -168,6 +170,39 @@ if True or not os.path.exists('cache.ckpt'):
 	for ifp_id in deleted_ifp:
 		del db[ifp_id]
 
+	df_all = pd.DataFrame(df_ary, columns=['ifp_id', 'user_id'])
+	df_all = df_all.loc[df_all.ifp_id.isin(db_dates.keys())]
+	# Descriptive statistics of data
+	duration = []
+	for ifp, days in db_dates.items():
+		delta = (max(days) - min(days)).days
+		if delta == 0:
+			delta = 1
+		print(ifp, delta)
+		duration.append(delta)
+
+	print('forecasts per question')
+	df_grouped = df_all.groupby(['ifp_id'])['user_id'].count()
+	print(df_grouped.describe())
+
+	print('forecasters per question')
+	df_grouped = df_all.groupby(['ifp_id'])['user_id'].nunique()
+	print(df_grouped.describe())
+
+	print('forecasts per user')
+	df_grouped = df_all.groupby(['user_id'])['ifp_id'].count()
+	print(df_grouped.describe())
+
+	print('# forecasters', len(df_all.user_id.unique()) )
+	print('# forecasts', len(df_all.user_id) )
+
+
+	print('# if IFPS = ', len(duration))
+	print('min duration = ', np.min(duration))
+	print('median duration = ', np.median(duration))
+	print('mean duration = ', np.mean(duration))
+	print('max duration = ', np.max(duration))
+	print('Std duration = ', np.std(duration))
 
 	with open('cache.ckpt', 'wb') as fout:
 		pickle.dump([
