@@ -423,6 +423,7 @@ def M0_aggregation(test_input, db_dates,db_answer,fold_index):
 
 	ifps = test_input.keys()
 	results = {}
+	predictions = {'score':[], 'true':[]}
 	for ifp in ifps:
 		results[ifp] = []
 
@@ -439,6 +440,11 @@ def M0_aggregation(test_input, db_dates,db_answer,fold_index):
 			if len(pred)>0:
 				score =  brier(pred, db_answer[ifp][0], ordered=db_answer[ifp][1])
 				results[ifp].append(score)
+
+				predictions['score'] += pred
+				true_pred = list(np.zeros(len(pred)))
+				true_pred[db_answer[ifp][0]] = 1
+				predictions['true']+= true_pred
 
 				local_seconds = (day.replace(hour=0, minute=0, second=0, microsecond=0)-start_date).total_seconds()
 				local_progress = int(np.around(100.0 * local_seconds / total_seconds))
@@ -457,7 +463,7 @@ def M0_aggregation(test_input, db_dates,db_answer,fold_index):
 	for ifp in ifps:
 		scores[ifp] = np.mean(results[ifp])
 
-	return scores, results
+	return scores, results, predictions
 
 def M1_aggregation(test_input, db_dates,db_answer,fold_index):
 	trend_m1_ary = []
@@ -466,6 +472,7 @@ def M1_aggregation(test_input, db_dates,db_answer,fold_index):
 
 	ifps = test_input.keys()
 	results = {}
+	predictions = {'score':[], 'true':[]}
 	for ifp in ifps:
 		results[ifp] = []
 
@@ -481,6 +488,11 @@ def M1_aggregation(test_input, db_dates,db_answer,fold_index):
 			if len(pred)>0:
 				score =  brier(pred, db_answer[ifp][0], ordered=db_answer[ifp][1])
 				results[ifp].append(score)
+
+				predictions['score'] += pred
+				true_pred = list(np.zeros(len(pred)))
+				true_pred[db_answer[ifp][0]] = 1
+				predictions['true']+= true_pred
 
 				local_seconds = (day.replace(hour=0, minute=0, second=0, microsecond=0)-start_date).total_seconds()
 				local_progress = int(np.around(100.0 * local_seconds / total_seconds))
@@ -499,7 +511,7 @@ def M1_aggregation(test_input, db_dates,db_answer,fold_index):
 	for ifp in ifps:
 		scores[ifp] = np.mean(results[ifp])
 
-	return scores, results
+	return scores, results, predictions
 
 def M2_aggregation(train_input,test_input, db_dates,db_answer,fold_index):
 	trend_m2_ary = []
@@ -514,6 +526,7 @@ def M2_aggregation(train_input,test_input, db_dates,db_answer,fold_index):
 
 	ifps = test_input.keys()
 	results = {}
+	predictions = {'score':[], 'true':[]}
 	for ifp in ifps:
 		results[ifp] = []
 
@@ -533,6 +546,11 @@ def M2_aggregation(train_input,test_input, db_dates,db_answer,fold_index):
 				score =  brier(pred, db_answer[ifp][0], ordered=db_answer[ifp][1])
 				results[ifp].append(score)
 
+				predictions['score'] += pred
+				true_pred = list(np.zeros(len(pred)))
+				true_pred[db_answer[ifp][0]] = 1
+				predictions['true']+= true_pred
+
 				local_seconds = (day.replace(hour=0, minute=0, second=0, microsecond=0)-start_date).total_seconds()
 				local_progress = int(np.around(100.0 * local_seconds / total_seconds))
 				if local_progress > 99:
@@ -550,7 +568,7 @@ def M2_aggregation(train_input,test_input, db_dates,db_answer,fold_index):
 	for ifp in ifps:
 		scores[ifp] = np.mean(results[ifp])
 
-	return scores, results
+	return scores, results, predictions
 
 def M3_aggregation(train_input, test_input, db_dates,db_answer, fold_index):
 	brier_score, question2user2brier = get_user_brier(train_input,db_dates,db_answer)
@@ -614,6 +632,7 @@ def M3_aggregation(train_input, test_input, db_dates,db_answer, fold_index):
 			trend_m3_ary.append([])
 
 		results_test = {}
+		predictions_test = {'score':[], 'true':[]}
 		for ifp in ifps_test:
 			results_test[ifp] = []
 
@@ -636,6 +655,12 @@ def M3_aggregation(train_input, test_input, db_dates,db_answer, fold_index):
 					score =  brier(pred, db_answer[ifp][0], ordered=db_answer[ifp][1])
 					results_test[ifp].append(score)
 
+					pred_numpy = np.asarray([x.detach().numpy() for x in pred]).squeeze()
+					predictions_test['score'] += pred_numpy.tolist()
+					true_pred = list(np.zeros(len(pred_numpy)))
+					true_pred[db_answer[ifp][0]] = 1
+					predictions_test['true'] += true_pred
+
 					local_seconds = (day.replace(hour=0, minute=0, second=0, microsecond=0)-start_date).total_seconds()
 					local_progress = int(np.around(100.0 * local_seconds / total_seconds))
 					if local_progress > 99:
@@ -651,16 +676,16 @@ def M3_aggregation(train_input, test_input, db_dates,db_answer, fold_index):
 		print('Epoch: {}, train mmdb: {}, test mmdb: {}'.format(z, mmdb_train, mmdb_test))
 
 		lr_scheduler.step(mmdb_test)
-		attempts.append([mmdb_test.detach().numpy(), scores_test, results_test, trend_m3_ary, W1.detach().numpy(), b1.detach().numpy(), W2.detach().numpy(), b2.detach().numpy()])
+		attempts.append([mmdb_test.detach().numpy(), scores_test, results_test, predictions_test, trend_m3_ary, W1.detach().numpy(), b1.detach().numpy(), W2.detach().numpy(), b2.detach().numpy()])
 
 	best_attempt = sorted(attempts)[0]
 	with open('model_m3/{}/model.pickle'.format(fold_index), 'wb') as fout:
-		pickle.dump(best_attempt[4:], fout, pickle.HIGHEST_PROTOCOL)
+		pickle.dump(best_attempt[5:], fout, pickle.HIGHEST_PROTOCOL)
 
 	with open('plot_data/m3_trend_db_{}.pickle'.format(fold_index), 'wb') as fout:
-		pickle.dump(best_attempt[3], fout, pickle.HIGHEST_PROTOCOL)
+		pickle.dump(best_attempt[4], fout, pickle.HIGHEST_PROTOCOL)
 
-	return best_attempt[1], best_attempt[2]
+	return best_attempt[1], best_attempt[2], best_attempt[3]
 
 # Aggregation placeholder
 all_ifp = np.asarray(list(db.keys()))
@@ -688,10 +713,11 @@ for i in range(5):
 	test_input = {k: db[k] for k in ifp_test}
 
 	#M0
-	scores, results = M0_aggregation(test_input, db_dates,db_answer,i)
+	scores, results, predictions = M0_aggregation(test_input, db_dates,db_answer,i)
 	with open('plot_data/m0_brier_db_{}.pickle'.format(i), 'wb') as fout:
 		pickle.dump(scores, fout, pickle.HIGHEST_PROTOCOL)
-
+	with open('plot_data/m0_predictions_db_{}.pickle'.format(i), 'wb') as fout:
+		pickle.dump(predictions, fout, pickle.HIGHEST_PROTOCOL)
 	#Mean Brier
 	print('M0 = ', np.array(list(scores.values())).mean())
 	scores_m0.append(np.array(list(scores.values())).mean())
@@ -709,9 +735,11 @@ for i in range(5):
 		pickle.dump(m0_rank_test, fout, pickle.HIGHEST_PROTOCOL)
 
 	#M1
-	scores, results = M1_aggregation(test_input, db_dates,db_answer,i)
+	scores, results, predictions = M1_aggregation(test_input, db_dates,db_answer,i)
 	with open('plot_data/m1_brier_db_{}.pickle'.format(i), 'wb') as fout:
 		pickle.dump(scores, fout, pickle.HIGHEST_PROTOCOL)
+	with open('plot_data/m1_predictions_db_{}.pickle'.format(i), 'wb') as fout:
+		pickle.dump(predictions, fout, pickle.HIGHEST_PROTOCOL)
 
 	#Mean Brier
 	print('M1 = ', np.array(list(scores.values())).mean())
@@ -730,9 +758,11 @@ for i in range(5):
 		pickle.dump(m1_rank_test, fout, pickle.HIGHEST_PROTOCOL)
 
 	#M2
-	scores, results = M2_aggregation(train_input, test_input, db_dates,db_answer,i)
+	scores, results, predictions = M2_aggregation(train_input, test_input, db_dates,db_answer,i)
 	with open('plot_data/m2_brier_db_{}.pickle'.format(i), 'wb') as fout:
 		pickle.dump(scores, fout, pickle.HIGHEST_PROTOCOL)
+	with open('plot_data/m2_predictions_db_{}.pickle'.format(i), 'wb') as fout:
+		pickle.dump(predictions, fout, pickle.HIGHEST_PROTOCOL)
 
 	#Mean Brier
 	print('M2 = ', np.array(list(scores.values())).mean())
@@ -751,13 +781,14 @@ for i in range(5):
 		pickle.dump(m2_rank_test, fout, pickle.HIGHEST_PROTOCOL)
 
 	#M3
-	scores, results = M3_aggregation(train_input, test_input, db_dates,db_answer, i)
+	scores, results, predictions = M3_aggregation(train_input, test_input, db_dates,db_answer, i)
 	scores = {k: v.detach().numpy() for k, v in scores.items()}
 	results = {k: [vv.detach().numpy() for vv in v] for k, v in results.items()}
 
 	with open('plot_data/m3_brier_db_{}.pickle'.format(i), 'wb') as fout:
 		pickle.dump(scores, fout, pickle.HIGHEST_PROTOCOL)
-
+	with open('plot_data/m3_predictions_db_{}.pickle'.format(i), 'wb') as fout:
+		pickle.dump(predictions, fout, pickle.HIGHEST_PROTOCOL)
 	#Mean Brier
 	print('M3 = ', np.array(list(scores.values())).mean())
 	scores_m3.append(np.array(list(scores.values())).mean())
