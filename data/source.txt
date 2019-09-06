@@ -1,0 +1,12 @@
+dump_questions_rcta.csv: https://github.com/isi-usc-edu/Backcast-aggregation/blob/rct-b/data/dump_questions.csv
+dump_questions_rctb.csv: https://github.com/isi-usc-edu/Backcast-aggregation/blob/rct-b/data/rct-b/dump_questions.csv
+dump_questions_rctc.csv: https://sage-rct.isi.edu/data/questions.csv
+
+human_features.csv: from slack message with Andres, filename: human_features_dryrun.csv. It actually includes RCTA+RCTB dry run features. human_features_rctc.csv: https://sage-rct.isi.edu/data/meta_human_features.csv Reformated to change date format.
+ts_features_rcta.csv, ts_features_rctb.csv: from slack message with Andres, filename: Archive.zip. Concatenate to get ts_features.csv
+dump_user_forecasts_rcta.txt: https://github.com/isi-usc-edu/Backcast-aggregation/blob/develop/data/dump_user_forecasts.csv
+dump_user_forecasts_rctb.txt: https://github.com/isi-usc-edu/Backcast-aggregation/blob/develop/data/rct-b/dry_run/dump_user_forecasts.csv
+dump_machine_models_full_rcta.csv: https://github.com/isi-usc-edu/Backcast-aggregation/blob/develop/data/dump_machine_models_full.csv
+dump_machine_forecasts_rctb.csv: https://github.com/isi-usc-edu/Backcast-aggregation/blob/develop/data/rct-b/dry_run/dump_machine_forecasts.csv
+machine_rctc.csv: from https://sage-rct.isi.edu/data/
+machine_all.csv: Combine from dump_machine_models_full_rcta.csv, dump_machine_forecasts_rctb.csv, machine_rctc.csv
