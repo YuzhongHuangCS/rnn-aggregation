@@ -69,15 +69,28 @@ for filename in ('data/dump_questions_rcta.csv', 'data/dump_questions_rctb.csv',
 				pdb.set_trace()
 				print(e)
 
-n_feature = 0
-'''
 human_feature = pd.read_csv('data/human_features.csv').drop_duplicates(subset=['date', 'ifp_id'], keep='last')
+hf_cols = human_feature.columns.tolist()
+hf_cols.remove('ifp_id')
+hf_cols.remove('date')
+hf_cols.remove('stage')
+hf_cols.remove('p_updates')
+hf_cols.remove('Health/Disease')
+human_feature = human_feature.drop(columns=hf_cols)
+
 ts_feature = pd.read_csv('data/ts_features.csv')
 
 human_feature_te = pd.read_csv('data/rctb/meta_human_features.csv').drop_duplicates(subset=['date', 'ifp_id'], keep='last')[human_feature.columns]
 ts_feature_te = pd.read_csv('data/rctb/meta_ts_features.csv')
+tf_cols = ts_feature_te.columns.tolist()
+tf_cols.remove('ifp_id')
+tf_cols.remove('date')
+tf_cols.remove('ratio')
+ts_feature_te = ts_feature_te.drop(columns=tf_cols)
+
 ts_feature = ts_feature[ts_feature_te.columns]
 n_feature = human_feature.shape[1] + ts_feature.shape[1] - 4
+n_feature = 0
 
 human_dict = {}
 for h_f in (human_feature, human_feature_te):
@@ -125,7 +138,6 @@ def get_feature(ifp_id, date):
 		print('OK')
 
 	return cf
-'''
 
 df = pd.read_csv('data/human.csv')
 #df.fillna(0, inplace=True)
@@ -182,6 +194,9 @@ for index, row in df_te.iterrows():
 
 	#cf = get_feature(ifp_id, datetime.strftime(date, "%Y-%m-%d"))
 	db_te[ifp_id].append([date,user_id,ifp_id,num_options,option_1,option_2,option_3,option_4,option_5])# + cf.tolist())
+
+human_ifp_rcta_set = set(db.keys())
+human_ifp_rctb_set = set(db_te.keys())
 
 machine_df = pd.read_csv('data/machine_all.csv').drop_duplicates(subset=['date', 'machine_model', 'ifp_id'], keep='last')
 for index, row in machine_df.iterrows():
@@ -353,7 +368,9 @@ for ifp_id in db_te:
 
 max_steps = max([len(v) for k, v in db.items()] + [len(v) for k, v in db_te.items()])
 
-all_ifp = np.asarray(list(db.keys()))
+intersect_ifp_rcta = human_ifp_rcta_set.intersection(machine_df['ifp_id'])
+intersect_ifp_rctb = human_ifp_rctb_set.intersection(machine_df_te['hfc_id'])
+all_ifp = np.asarray(list(intersect_ifp_rcta))
 
 kf = sklearn.model_selection.KFold(shuffle=True, n_splits=5, random_state=2019)
 folds = [[all_ifp[f[0]], all_ifp[f[1]]] for f in kf.split(all_ifp)]
@@ -361,7 +378,7 @@ fold_index = 0
 
 ifp_train = folds[fold_index][0]
 ifp_valid = folds[fold_index][1]
-ifp_test = np.asarray(list(db_te.keys()))
+ifp_test = np.asarray(list(intersect_ifp_rctb))
 
 n_train = len(ifp_train)
 n_valid = len(ifp_valid)
@@ -419,6 +436,9 @@ index_map_train = {}
 
 forecast_index = 0
 for index, ifp in enumerate(ifp_train):
+	if ifp not in db:
+		pdb.set_trace()
+		print(ifp)
 	forecasts = db[ifp]
 
 	for i, forecast in enumerate(forecasts):

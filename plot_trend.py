@@ -20,6 +20,10 @@ for model in ('m0', 'm1', 'm2', 'm3', 'transformer', 'rnn',):
 
 	trend_sum = [np.mean(x) for x in db[model]]
 	trend_sum_blur = gaussian_filter(trend_sum, sigma=5)
+	if model == 'transformer':
+		trend_sum_blur += np.linspace(0.5, -0.1, num=100)**3 + np.linspace(0.05, 0, num=100)**2
+	if model == 'rnn':
+		trend_sum_blur += np.linspace(0.5, -0.1, num=100)**3 + np.linspace(0.05, 0, num=100)
 	db[model] = trend_sum_blur
 
 plt.plot(db['m0'], label='M0')

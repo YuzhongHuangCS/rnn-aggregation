@@ -96,8 +96,6 @@ for index, row in ts_feature.iterrows():
 	else:
 		ts_dict[ifp_id][date] = row.drop(labels=['ifp_id', 'date']).values
 
-#n_human_feature = next(iter(next(iter((human_dict.values()))).values()))
-
 def get_feature(ifp_id, date):
 	if ifp_id in human_dict and date in human_dict[ifp_id]:
 		hf = human_dict[ifp_id][date]
@@ -146,6 +144,7 @@ for index, row in df.iterrows():
 
 	cf = get_feature(ifp_id, datetime.strftime(date, "%Y-%m-%d"))
 	db[ifp_id].append([date,user_id,ifp_id,num_options,option_1,option_2,option_3,option_4,option_5] + cf.tolist())
+
 
 machine_df = pd.read_csv('data/machine_all.csv').drop_duplicates(subset=['date', 'machine_model', 'ifp_id'], keep='last')
 for index, row in machine_df.iterrows():
@@ -239,6 +238,7 @@ fold_index = 0
 
 ifp_train = folds[fold_index][0]
 ifp_test = folds[fold_index][1]
+pdb.set_trace()
 
 n_train = len(ifp_train)
 n_test = len(ifp_test)
@@ -415,10 +415,10 @@ embedded_features = tf.nn.embedding_lookup(embedding, id_placeholder)
 combined_input = tf.concat([input_placeholder, embedded_features[:, :, 0, :]], 2)
 
 #cell = Modified_LSTMCell(N_RNN_DIM, state_is_tuple=True)
-cell = tf.nn.rnn_cell.LSTMCell(N_RNN_DIM, use_peepholes=True)
+#cell = tf.nn.rnn_cell.LSTMCell(N_RNN_DIM, use_peepholes=True)
 #cell = tf.nn.rnn_cell.LSTMCell(N_RNN_DIM, initializer=tf.orthogonal_initializer())
 #cell = tf.nn.rnn_cell.GRUCell(N_RNN_DIM, kernel_initializer=tf.orthogonal_initializer())
-#cell = tf.nn.rnn_cell.GRUCell(N_RNN_DIM, kernel_initializer=tf.orthogonal_initializer(), bias_initializer=tf.zeros_initializer())
+cell = tf.nn.rnn_cell.GRUCell(N_RNN_DIM, kernel_initializer=tf.orthogonal_initializer(), bias_initializer=tf.zeros_initializer())
 #keep_prob = tf.cond(is_training, lambda:tf.constant(0.9), lambda:tf.constant(1.0))
 #cell_dropout = tf.contrib.rnn.DropoutWrapper(cell, input_keep_prob = keep_prob, output_keep_prob = keep_prob, state_keep_prob = keep_prob)
 
@@ -426,7 +426,7 @@ state_series, _ = tf.nn.dynamic_rnn(cell, combined_input, sequence_length=seq_le
 W1 = tf.get_variable('weight1', shape=(N_RNN_DIM, 5), initializer=tf.glorot_uniform_initializer())
 b1 = tf.get_variable('bias1', shape=(1, 5), initializer=tf.zeros_initializer())
 needed_state = tf.gather_nd(state_series, gather_index_placeholder)
-prediction = tf.matmul(tf.math.sigmoid(needed_state), W1) + b1
+prediction = tf.matmul(tf.nn.relu(needed_state), W1) + b1
 prediction_softmax = tf.nn.softmax(prediction)
 raw_prob = tf.math.multiply(prediction_softmax, num_option_mask_placeholder)
 prob_row_sum = tf.reduce_sum(raw_prob, axis=1)

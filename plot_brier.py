@@ -10,11 +10,11 @@ name_map = {
 	'M0': 'm0',
 	'M1': 'm1',
 	'M2': 'm2',
-	'M2 + feature': 'm3',
-	'Transformer': 'transformer',
+	'M2 + feature  ': 'm3',
+	'  Transformer': 'transformer',
 	'RNN': 'rnn'
 }
-for model in ('M0', 'M1', 'M2', 'M2 + feature', 'Transformer', 'RNN',):
+for model in ('M0', 'M1', 'M2', 'M2 + feature  ', '  Transformer', 'RNN',):
 	model_name = name_map[model]
 	for i in range(5):
 		filename = 'plot_data/{}_brier_db_{}.pickle'.format(model_name, i)
@@ -25,9 +25,11 @@ for model in ('M0', 'M1', 'M2', 'M2 + feature', 'Transformer', 'RNN',):
 			else:
 				db[model] = db_brier
 
+pdb.set_trace()
 sns.set(style="whitegrid")
 df = pd.DataFrame.from_dict(db)
 ax = sns.violinplot(data=df, bw=0.1, cut=0, scale='count', inner='quartiles')
+plt.ylabel('Brier')
 plt.show()
 pdb.set_trace()
 #np.quantile(list(db['m0'].values()), 0.25)

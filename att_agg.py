@@ -93,6 +93,8 @@ human_feature = pd.read_csv('data/human_features.csv').drop_duplicates(subset=['
 hf_cols = human_feature.columns.tolist()
 hf_cols.remove('ifp_id')
 hf_cols.remove('date')
+hf_cols.remove('p_updates')
+hf_cols.remove('Health/Disease')
 if feature_used is not None:
 	for fu in feature_used:
 		if fu in human_feature_list and fu in hf_cols:
@@ -106,6 +108,7 @@ ts_feature_rctc = pd.read_csv('data/ts_features_rctc.csv')
 tf_cols = ts_feature_rctc.columns.tolist()
 tf_cols.remove('ifp_id')
 tf_cols.remove('date')
+tf_cols.remove('ratio')
 if feature_used is not None:
 	for fu in feature_used:
 		if fu in ts_feature_list and fu in tf_cols:
