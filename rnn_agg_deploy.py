@@ -36,7 +36,7 @@ else:
 print('fold_index: {}'.format(fold_index))
 print('feature_used: {}'.format(feature_used))
 
-#word_embedding = initialize_embedding()
+word_embedding = initialize_embedding()
 db_answer = {}
 db_boundary = {}
 db_emb = {}
@@ -71,7 +71,6 @@ for filename in ('data/dump_questions_rcta.csv', 'data/dump_questions_rctb.csv')
 					end_date = min(end_date, resolved_date)
 					db_boundary[ifp_id] = [start_date, end_date]
 
-					'''
 					features = []
 					for w in word_tokenize(row['title']):
 						feature = embedding_lookup(w, word_embedding)
@@ -80,12 +79,12 @@ for filename in ('data/dump_questions_rcta.csv', 'data/dump_questions_rctb.csv')
 
 					feature_mean = np.mean(np.asarray(features), axis=0)
 					db_emb[ifp_id] = feature_mean
-					'''
+
 			except ValueError as e:
 				pdb.set_trace()
 				print(e)
 
-'''
+
 human_feature_list = ['n_forecasts_te', 'variance_sage', 'n_forecasts_d', 'n_forecasts_sage', 'entropy_b', 'entropy_d', 'entropy_te', 'n_forecasts_b', 'entropy_c', 'Technology', 'variance_b', 'variance_d', 'Other', 'n_forecasts_c', 'stage', 'entropy_sage', 'n_forecasts', 'Politics/Intl Relations', 'Macroeconomics/Finance', 'variance_te', 'variance_c', 'variance_human', 'entropy_human', 'ordinal', 'Natural Sciences/Climate']
 human_feature = pd.read_csv('data/human_features.csv').drop_duplicates(subset=['date', 'ifp_id'], keep='last')
 hf_cols = human_feature.columns.tolist()
@@ -102,8 +101,8 @@ if feature_used is not None:
 human_feature = human_feature.drop(columns=hf_cols)
 
 ts_feature_list = ['diff2_acf10', 'entropy', 'diff1_acf10', 'seas_pacf', 'linearity', 'spike', 'nonlinearity', 'diff1x_pacf5', 'e_acf10', 'series_length', 'hurst', 'ARCH.LM', 'ratio', 'seas_acf1', 'x_acf1', 'crossing_points', 'x_pacf5', 'diff1_acf1', 'trend', 'trough', 'unitroot_pp', 'diff2x_pacf5', 'x_acf10', 'nperiods', 'flat_spots', 'seasonal_period', 'peak', 'beta', 'diff2_acf1', 'lumpiness', 'e_acf1', 'skew', 'curvature', 'alpha', 'unitroot_kpss', 'seasonal_strength', 'stability']
-ts_feature_rctc = pd.read_csv('data/ts_features_rctc.csv')
-tf_cols = ts_feature_rctc.columns.tolist()
+ts_feature = pd.read_csv('data/ts_features.csv')
+tf_cols = ts_feature.columns.tolist()
 tf_cols.remove('ifp_id')
 tf_cols.remove('date')
 tf_cols.remove('ratio')
@@ -111,8 +110,7 @@ if feature_used is not None:
 	for fu in feature_used:
 		if fu in ts_feature_list and fu in tf_cols:
 			tf_cols.remove(fu)
-ts_feature_rctc = ts_feature_rctc.drop(columns=tf_cols)
-ts_feature = pd.read_csv('data/ts_features.csv')[ts_feature_rctc.columns]
+ts_feature = ts_feature.drop(columns=tf_cols)
 
 n_feature = human_feature.shape[1] + ts_feature.shape[1] - 4
 print(human_feature.columns)
@@ -120,28 +118,26 @@ print(ts_feature.columns)
 print('n_feature', n_feature)
 
 human_dict = defaultdict(dict)
-for h_f in (human_feature, human_feature_rctc):
-	for index, row in h_f.iterrows():
-		ifp_id = row['ifp_id']
-		date = row['date']
+for index, row in human_feature.iterrows():
+	ifp_id = row['ifp_id']
+	date = row['date']
 
-		if date in human_dict[ifp_id]:
-			pdb.set_trace()
-			print('Duplicate feature')
-		else:
-			human_dict[ifp_id][date] = row.drop(labels=['ifp_id', 'date']).values
+	if date in human_dict[ifp_id]:
+		pdb.set_trace()
+		print('Duplicate feature')
+	else:
+		human_dict[ifp_id][date] = row.drop(labels=['ifp_id', 'date']).values
 
 ts_dict = defaultdict(dict)
-for t_f in (ts_feature, ts_feature_rctc):
-	for index, row in t_f.iterrows():
-		ifp_id = row['ifp_id']
-		date = row['date']
+for index, row in ts_feature.iterrows():
+	ifp_id = row['ifp_id']
+	date = row['date']
 
-		if date in ts_dict[ifp_id]:
-			pdb.set_trace()
-			print('Duplicate feature')
-		else:
-			ts_dict[ifp_id][date] = row.drop(labels=['ifp_id', 'date']).values
+	if date in ts_dict[ifp_id]:
+		pdb.set_trace()
+		print('Duplicate feature')
+	else:
+		ts_dict[ifp_id][date] = row.drop(labels=['ifp_id', 'date']).values
 
 def get_feature(ifp_id, date):
 	if ifp_id in human_dict and date in human_dict[ifp_id]:
@@ -161,9 +157,7 @@ def get_feature(ifp_id, date):
 		print('OK')
 
 	return cf
-'''
 
-n_feature = 0
 db = defaultdict(list)
 for filename in ('data/dump_user_forecasts_rcta.csv', 'data/dump_user_forecasts_rctb.csv'):
 	df = pd.read_csv(filename)
@@ -188,8 +182,8 @@ for filename in ('data/dump_user_forecasts_rcta.csv', 'data/dump_user_forecasts_
 		if num_options == 1:
 			num_options = 2
 
-		#cf = get_feature(ifp_id, datetime.strftime(date, "%Y-%m-%d"))
-		db[ifp_id].append([date,user_id,ifp_id,num_options,option_1,option_2,option_3,option_4,option_5])
+		cf = get_feature(ifp_id, datetime.strftime(date, "%Y-%m-%d"))
+		db[ifp_id].append([date,user_id,ifp_id,num_options,option_1,option_2,option_3,option_4,option_5] + cf.tolist())
 
 machine_df = pd.read_csv('data/machine_all.csv').drop_duplicates(subset=['date', 'machine_model', 'ifp_id'], keep='last')
 for index, row in machine_df.iterrows():
@@ -226,8 +220,8 @@ for index, row in machine_df.iterrows():
 		pdb.set_trace()
 		print("Didn't expect any ifp have human forecast but don't have machine forecast")
 
-	#cf = get_feature(ifp_id, datetime.strftime(date, "%Y-%m-%d"))
-	db[ifp_id].append([date,machine_model,ifp_id,num_options,option_1,option_2,option_3,option_4,option_5])
+	cf = get_feature(ifp_id, datetime.strftime(date, "%Y-%m-%d"))
+	db[ifp_id].append([date,machine_model,ifp_id,num_options,option_1,option_2,option_3,option_4,option_5] + cf.tolist())
 
 db_dates = {}
 deleted_ifp = []
@@ -279,21 +273,15 @@ print('n_valid', n_valid)
 print('n_test', n_test)
 
 N_RNN_DIM = 32
-N_EMB_DIM = 8
+N_EMB_DIM = 4
 
-special_symbol = {
+id2index = {
 	'padding': 0,
 	'unknown': 1,
+	'Auto ARIMA': 2,
+	'M4-Meta': 3,
+	'Arithmetic RW': 4
 }
-
-id_counter = Counter()
-for ifp_id, forecasts in db.items():
-	if ifp_id in ifp_train:
-		id_counter.update([f[1] for f in forecasts])
-
-id2index = copy.deepcopy(special_symbol)
-for index, value in enumerate(id_counter.most_common()):
-	id2index[value[0]] = index + len(special_symbol)
 
 ### TRAIN data
 n_forecast_train = sum([len(v) for k, v in db_dates.items() if k in ifp_train])
@@ -323,7 +311,7 @@ for index, ifp in enumerate(ifp_train):
 		forecaster_id = id2index.get(forecast[1], 1)
 		id_train[index, i] = forecaster_id
 
-	#state_train[index] = db_emb[ifp]
+	state_train[index] = db_emb[ifp]
 	forecast_dates = db_dates[ifp]
 	n_forecasts = len(forecast_dates)
 	activity_dates = [x[0] for x in forecasts]
@@ -386,7 +374,7 @@ for index, ifp in enumerate(ifp_valid):
 		forecaster_id = id2index.get(forecast[1], 1)
 		id_valid[index, i] = forecaster_id
 
-	#state_valid[index] = db_emb[ifp]
+	state_valid[index] = db_emb[ifp]
 	forecast_dates = db_dates[ifp]
 	n_forecasts = len(forecast_dates)
 	activity_dates = [x[0] for x in forecasts]
@@ -449,7 +437,7 @@ for index, ifp in enumerate(ifp_train_valid):
 		forecaster_id = id2index.get(forecast[1], 1)
 		id_train_valid[index, i] = forecaster_id
 
-	#state_train_valid[index] = db_emb[ifp]
+	state_train_valid[index] = db_emb[ifp]
 	forecast_dates = db_dates[ifp]
 	n_forecasts = len(forecast_dates)
 	activity_dates = [x[0] for x in forecasts]
@@ -513,7 +501,7 @@ for index, ifp in enumerate(ifp_test):
 		forecaster_id = id2index.get(forecast[1], 1)
 		id_test[index, i] = forecaster_id
 
-	#state_test[index] = db_emb[ifp]
+	state_test[index] = db_emb[ifp]
 	forecast_dates = db_dates[ifp]
 	n_forecasts = len(forecast_dates)
 	activity_dates = [x[0] for x in forecasts]
@@ -551,7 +539,7 @@ input_test[np.isnan(input_test)] = 0
 # Network placeholder
 is_training = tf.placeholder_with_default(False, shape=(), name='is_training')
 input_placeholder = tf.placeholder(tf.float32, [None, max_steps, 5 + n_feature])
-#id_placeholder = tf.placeholder(tf.int32, [None, max_steps])
+id_placeholder = tf.placeholder(tf.int32, [None, max_steps])
 target_placeholder = tf.placeholder(tf.float32, [None, 5])
 is_ordered_placeholder = tf.placeholder(tf.bool, [None])
 is_4_placeholder = tf.placeholder(tf.bool, [None])
@@ -562,33 +550,32 @@ seq_length_mask_placeholder = tf.placeholder(tf.float32, [None, max_steps, max_s
 gather_index_placeholder = tf.placeholder(tf.int32, [None, 2])
 num_option_mask_placeholder = tf.placeholder(tf.float32, [None, 5])
 
-#embedding = tf.get_variable('embedding', shape=(len(id2index), N_EMB_DIM), initializer=tf.random_uniform_initializer(-math.sqrt(3), math.sqrt(3)))
-#embedded_features = tf.nn.embedding_lookup(embedding, id_placeholder)
-#combined_input = tf.concat([input_placeholder, embedded_features], 2)
-combined_input = input_placeholder
+embedding = tf.get_variable('embedding', shape=(len(id2index), N_EMB_DIM), initializer=tf.random_uniform_initializer(-math.sqrt(3), math.sqrt(3)))
+embedded_features = tf.nn.embedding_lookup(embedding, id_placeholder)
+combined_input = tf.concat([input_placeholder, embedded_features], 2)
 
 cell = tf.nn.rnn_cell.GRUCell(N_RNN_DIM, kernel_initializer=tf.orthogonal_initializer(), bias_initializer=tf.zeros_initializer())
 input_keep_prob = tf.cond(is_training, lambda:tf.constant(0.9), lambda:tf.constant(1.0))
 output_keep_prob = tf.cond(is_training, lambda:tf.constant(0.9), lambda:tf.constant(1.0))
 state_keep_prob = tf.cond(is_training, lambda:tf.constant(0.9), lambda:tf.constant(1.0))
 cell_dropout = tf.contrib.rnn.DropoutWrapper(cell, input_keep_prob = input_keep_prob, output_keep_prob = output_keep_prob, state_keep_prob = state_keep_prob)
-#initial_state = tf.placeholder(tf.float32, [None, 300])
-#W_emb = tf.get_variable('embedding_weight', shape=(300, N_RNN_DIM), initializer=tf.glorot_uniform_initializer())
-#b_emb = tf.get_variable('embedding_bias', shape=(1, N_RNN_DIM), initializer=tf.zeros_initializer())
-#zero_state = tf.matmul(initial_state, W_emb) + b_emb
+initial_state = tf.placeholder(tf.float32, [None, 300])
+W_emb = tf.get_variable('embedding_weight', shape=(300, N_RNN_DIM), initializer=tf.glorot_uniform_initializer())
+b_emb = tf.get_variable('embedding_bias', shape=(1, N_RNN_DIM), initializer=tf.zeros_initializer())
+zero_state = tf.matmul(initial_state, W_emb) + b_emb
 
-state_series, _ = tf.nn.dynamic_rnn(cell_dropout, combined_input, sequence_length=seq_length_placeholder, dtype=tf.float32)
+state_series, _ = tf.nn.dynamic_rnn(cell_dropout, combined_input, sequence_length=seq_length_placeholder, initial_state=zero_state)
 
 ## attension score should be causal (lower triangle)
-#upper_triangle = tf.linalg.band_part(tf.constant(-1e32, shape=(max_steps, max_steps)), 0, -1)
-#att_scores = tf.nn.softmax(tf.linalg.band_part(tf.matmul(state_series, tf.transpose(state_series, [0, 2, 1])) / (N_RNN_DIM ** 0.5), -1, 0) + upper_triangle + seq_length_mask_placeholder)
-#att_state_series = tf.matmul(att_scores, state_series)
+upper_triangle = tf.linalg.band_part(tf.constant(-1e32, shape=(max_steps, max_steps)), 0, -1)
+att_scores = tf.nn.softmax(tf.linalg.band_part(tf.matmul(state_series, tf.transpose(state_series, [0, 2, 1])) / (N_RNN_DIM ** 0.5), -1, 0) + upper_triangle + seq_length_mask_placeholder)
+att_state_series = tf.matmul(att_scores, state_series)
 
-W1 = tf.get_variable('weight1', shape=(N_RNN_DIM, 5), initializer=tf.glorot_uniform_initializer())
+W1 = tf.get_variable('weight1', shape=(N_RNN_DIM * 2, 5), initializer=tf.glorot_uniform_initializer())
 b1 = tf.get_variable('bias1', shape=(1, 5), initializer=tf.zeros_initializer())
 
-#combined_state_series = tf.concat([state_series, att_state_series], 2)
-needed_state = tf.gather_nd(state_series, gather_index_placeholder)
+combined_state_series = tf.concat([state_series, att_state_series], 2)
+needed_state = tf.gather_nd(combined_state_series, gather_index_placeholder)
 
 prediction = tf.matmul(tf.nn.tanh(needed_state), W1) + b1
 prob = tf.nn.softmax(prediction + num_option_mask_placeholder)
@@ -662,7 +649,6 @@ save_path = save_dir + '/model.ckpt'
 
 with tf.Session() as sess:
 	sess.run(tf.global_variables_initializer())
-
 	valid_scores = []
 	smallest_loss = float('inf')
 	smallest_train_loss = float('inf')
@@ -684,23 +670,22 @@ with tf.Session() as sess:
 			ops.append(tf.assign(tf_vars[i_tf], smallest_weight[i_tf]))
 		sess.run(ops)
 
-	pdb.set_trace()
 	for i in range(50):
 		train_loss, train_pred, _train_step = sess.run(
 			[loss_weighted, prob, train_op],
 				feed_dict={
 					input_placeholder: input_train,
-					#id_placeholder: id_train,
+					id_placeholder: id_train,
 					target_placeholder: target_train,
 					is_ordered_placeholder: is_ordered_train,
 					is_4_placeholder: is_4_train,
 					is_3_placeholder: is_3_train,
 					weight_placeholder: weight_train,
 					seq_length_placeholder: seq_length_train,
-					#seq_length_mask_placeholder: seq_length_mask_train,
+					seq_length_mask_placeholder: seq_length_mask_train,
 					gather_index_placeholder: gather_index_train,
 					num_option_mask_placeholder: num_option_mask_train,
-					#initial_state: state_train,
+					initial_state: state_train,
 					is_training: True
 				}
 		)
@@ -709,17 +694,17 @@ with tf.Session() as sess:
 			[loss_weighted, prob],
 				feed_dict={
 					input_placeholder: input_valid,
-					#id_placeholder: id_valid,
+					id_placeholder: id_valid,
 					target_placeholder: target_valid,
 					is_ordered_placeholder: is_ordered_valid,
 					is_4_placeholder: is_4_valid,
 					is_3_placeholder: is_3_valid,
 					weight_placeholder: weight_valid,
 					seq_length_placeholder: seq_length_valid,
-					#seq_length_mask_placeholder: seq_length_mask_valid,
+					seq_length_mask_placeholder: seq_length_mask_valid,
 					gather_index_placeholder: gather_index_valid,
 					num_option_mask_placeholder: num_option_mask_valid,
-					#initial_state: state_valid,
+					initial_state: state_valid,
 					is_training: False
 				}
 		)
@@ -728,17 +713,17 @@ with tf.Session() as sess:
 			[loss_weighted, prob],
 				feed_dict={
 					input_placeholder: input_test,
-					#id_placeholder: id_test,
+					id_placeholder: id_test,
 					target_placeholder: target_test,
 					is_ordered_placeholder: is_ordered_test,
 					is_4_placeholder: is_4_test,
 					is_3_placeholder: is_3_test,
 					weight_placeholder: weight_test,
 					seq_length_placeholder: seq_length_test,
-					#seq_length_mask_placeholder: seq_length_mask_test,
+					seq_length_mask_placeholder: seq_length_mask_test,
 					gather_index_placeholder: gather_index_test,
 					num_option_mask_placeholder: num_option_mask_test,
-					#initial_state: state_test,
+					initial_state: state_test,
 					is_training: False
 				}
 		)
@@ -796,17 +781,17 @@ with tf.Session() as sess:
 		[loss_weighted, prob],
 			feed_dict={
 				input_placeholder: input_train_valid,
-				#id_placeholder: id_train_valid,
+				id_placeholder: id_train_valid,
 				target_placeholder: target_train_valid,
 				is_ordered_placeholder: is_ordered_train_valid,
 				is_4_placeholder: is_4_train_valid,
 				is_3_placeholder: is_3_train_valid,
 				weight_placeholder: weight_train_valid,
 				seq_length_placeholder: seq_length_train_valid,
-				#seq_length_mask_placeholder: seq_length_mask_train_valid,
+				seq_length_mask_placeholder: seq_length_mask_train_valid,
 				gather_index_placeholder: gather_index_train_valid,
 				num_option_mask_placeholder: num_option_mask_train_valid,
-				#initial_state: state_train_valid,
+				initial_state: state_train_valid,
 				is_training: True
 			}
 	)
@@ -821,7 +806,7 @@ with tf.Session() as sess:
 			[loss_weighted, prob, train_op],
 				feed_dict={
 					input_placeholder: input_train_valid,
-					#id_placeholder: id_train_valid,
+					id_placeholder: id_train_valid,
 					target_placeholder: target_train_valid,
 					is_ordered_placeholder: is_ordered_train_valid,
 					is_4_placeholder: is_4_train_valid,
@@ -831,7 +816,7 @@ with tf.Session() as sess:
 					seq_length_mask_placeholder: seq_length_mask_train_valid,
 					gather_index_placeholder: gather_index_train_valid,
 					num_option_mask_placeholder: num_option_mask_train_valid,
-					#initial_state: state_train_valid,
+					initial_state: state_train_valid,
 					is_training: True
 				}
 		)
@@ -840,7 +825,7 @@ with tf.Session() as sess:
 			[loss_weighted, prob],
 				feed_dict={
 					input_placeholder: input_test,
-					#id_placeholder: id_test,
+					id_placeholder: id_test,
 					target_placeholder: target_test,
 					is_ordered_placeholder: is_ordered_test,
 					is_4_placeholder: is_4_test,
@@ -850,7 +835,7 @@ with tf.Session() as sess:
 					seq_length_mask_placeholder: seq_length_mask_test,
 					gather_index_placeholder: gather_index_test,
 					num_option_mask_placeholder: num_option_mask_test,
-					#initial_state: state_test,
+					initial_state: state_test,
 					is_training: False
 				}
 		)
