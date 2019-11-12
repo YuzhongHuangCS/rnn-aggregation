@@ -24,7 +24,7 @@ import math
 from nltk.tokenize import word_tokenize
 from utils import is_ordered, initialize_embedding, embedding_lookup
 import scipy.stats
-
+import matplotlib.pyplot as plt
 if len(sys.argv) >= 3:
 	model_name = sys.argv[1]
 	fold_index = int(sys.argv[2])
@@ -110,7 +110,7 @@ ts_feature_rctc = pd.read_csv('data/ts_features_rctc.csv')
 tf_cols = ts_feature_rctc.columns.tolist()
 tf_cols.remove('ifp_id')
 tf_cols.remove('date')
-tf_cols.remove('ratio')
+#tf_cols.remove('ratio')
 if feature_used is not None:
 	for fu in feature_used:
 		if fu in ts_feature_list and fu in tf_cols:
@@ -263,6 +263,7 @@ for ifp_id in db:
 for ifp_id in deleted_ifp:
 	del db[ifp_id]
 
+
 max_steps = max([len(v) for k, v in db.items()])
 all_ifp = np.asarray(list(db.keys()))
 kf = sklearn.model_selection.KFold(shuffle=True, n_splits=5, random_state=1)
@@ -277,7 +278,28 @@ n_valid = len(ifp_valid)
 print('max_steps', max_steps)
 print('n_train', n_train)
 print('n_valid', n_valid)
+'''
+max_steps = max([len(v) for k, v in db.items()])
+all_ifp = np.asarray(list(db.keys()))
+kf = sklearn.model_selection.KFold(shuffle=True, n_splits=5, random_state=1)
+folds = [[all_ifp[f[0]], all_ifp[f[1]]] for f in kf.split(all_ifp)]
 
+ifp_train_valid = folds[fold_index][0]
+ifp_test = folds[fold_index][1]
+n_train_valid = len(ifp_train_valid)
+n_test = len(ifp_test)
+
+n_train = int(n_train_valid*0.9)
+n_valid = n_train_valid - n_train
+ifp_train = ifp_train_valid[n_valid:]
+ifp_valid = ifp_train_valid[:n_valid]
+
+print('max_steps', max_steps)
+print('n_train', n_train)
+print('n_train_valid', n_train_valid)
+print('n_valid', n_valid)
+print('n_test', n_test)
+'''
 N_RNN_DIM = 32
 N_EMB_DIM = 8
 
@@ -452,8 +474,8 @@ zero_state = tf.matmul(initial_state, W_emb) + b_emb
 state_series, _ = tf.nn.dynamic_rnn(cell_dropout, combined_input, sequence_length=seq_length_placeholder, initial_state=zero_state)
 
 ## attension score should be causal (lower triangle)
-#upper_triangle = tf.linalg.band_part(tf.constant(-1e32, shape=(max_steps, max_steps)), 0, -1)
-att_scores = tf.nn.softmax(tf.linalg.band_part(tf.matmul(state_series, tf.transpose(state_series, [0, 2, 1])) / (N_RNN_DIM ** 0.5), -1, 0) + seq_length_mask_placeholder)
+upper_triangle = tf.linalg.band_part(tf.constant(-1e32, shape=(max_steps, max_steps)), 0, -1)
+att_scores = tf.nn.softmax(tf.linalg.band_part(tf.matmul(state_series, tf.transpose(state_series, [0, 2, 1])) / (N_RNN_DIM ** 0.5), -1, 0) + upper_triangle + seq_length_mask_placeholder)
 att_state_series = tf.matmul(att_scores, state_series)
 
 W1 = tf.get_variable('weight1', shape=(N_RNN_DIM * 2, 5), initializer=tf.glorot_uniform_initializer())
@@ -551,6 +573,7 @@ with tf.Session() as sess:
 
 	def _load_weights():
 		tf_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES)
+		#pdb.set_trace()
 		ops = []
 		for i_tf in range(len(tf_vars)):
 			ops.append(tf.assign(tf_vars[i_tf], smallest_weight[i_tf]))
@@ -560,7 +583,19 @@ with tf.Session() as sess:
 		smallest_weight = pickle.load(fin)
 
 	_load_weights()
-
+	index2id = {v: k for k, v in id2index.items()}
+	names = list(index2id.values())[2:]
+	'''
+	from sklearn.manifold import TSNE
+	X = sess.run(embedding)
+	X_emb = TSNE(n_components=2).fit_transform(X[2:, :])
+	plt.figure(figsize=(100,100))
+	plt.scatter(X_emb[:, 0], X_emb[:, 1])
+	for i in range(len(names)):
+		plt.annotate(names[i], (X_emb[i, 0], X_emb[i, 1]))
+	plt.savefig('1234.pdf', bbox_inches = "tight")
+	pdb.set_trace()
+	'''
 	valid_loss, valid_pred = sess.run(
 		[loss_weighted, prob],
 			feed_dict={
@@ -603,7 +638,7 @@ with tf.Session() as sess:
 				local_progress = 99
 			trend_att_ary[local_progress].append(s)
 
-	with open('plot_data/rnn_trend_db_{}.pickle'.format(fold_index), 'wb') as fout:
+	with open('plot_data/rnn2_trend_db_{}.pickle'.format(fold_index), 'wb') as fout:
 		pickle.dump(trend_att_ary, fout, pickle.HIGHEST_PROTOCOL)
 
 	db_brier_valid = {}
@@ -630,13 +665,13 @@ with tf.Session() as sess:
 			true_pred[answer] = 1
 			db_prediction_valid['true']+= true_pred
 
-	with open('plot_data/rnn_brier_db_{}.pickle'.format(fold_index), 'wb') as fout:
+	with open('plot_data/rnn2_brier_db_{}.pickle'.format(fold_index), 'wb') as fout:
 		pickle.dump(db_brier_valid, fout, pickle.HIGHEST_PROTOCOL)
 
-	with open('plot_data/rnn_predictions_db_{}.pickle'.format(fold_index), 'wb') as fout:
+	with open('plot_data/rnn2_predictions_db_{}.pickle'.format(fold_index), 'wb') as fout:
 		pickle.dump(db_prediction_valid, fout, pickle.HIGHEST_PROTOCOL)
 
-	with open('plot_data/rnn_rank_db_{}.pickle'.format(fold_index), 'wb') as fout:
+	with open('plot_data/rnn2_rank_db_{}.pickle'.format(fold_index), 'wb') as fout:
 		pickle.dump(db_rank_valid, fout, pickle.HIGHEST_PROTOCOL)
 
 	print('valid_loss', valid_loss)

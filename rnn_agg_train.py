@@ -43,12 +43,16 @@ db_emb = {}
 
 # 1. db_date is first computed by question dump
 # 2. db_date is then adjusted by actual forecasts
+
+discover2ifp = {}
 for filename in ('data/dump_questions_rcta.csv', 'data/dump_questions_rctb.csv', 'data/dump_questions_rctc.csv'):
 	df_question = pd.read_csv(filename)
 	for index, row in df_question.iterrows():
 		if row['is_resolved'] and (not row['is_voided']):
 			if filename == 'data/dump_questions_rctc.csv':
 				ifp_id = row['hfc_id']
+				discover_id = row['discover_id']
+				discover2ifp[discover_id] = ifp_id
 			else:
 				ifp_id = row['ifp_id']
 
@@ -135,16 +139,28 @@ for h_f in (human_feature, human_feature_rctc):
 			human_dict[ifp_id][date] = row.drop(labels=['ifp_id', 'date']).values
 
 ts_dict = defaultdict(dict)
-for t_f in (ts_feature, ts_feature_rctc):
-	for index, row in t_f.iterrows():
-		ifp_id = row['ifp_id']
-		date = row['date']
+for index, row in ts_feature.iterrows():
+	ifp_id = row['ifp_id']
+	date = row['date']
 
-		if date in ts_dict[ifp_id]:
-			pdb.set_trace()
-			print('Duplicate feature')
-		else:
-			ts_dict[ifp_id][date] = row.drop(labels=['ifp_id', 'date']).values
+	if date in ts_dict[ifp_id]:
+		pdb.set_trace()
+		print('Duplicate feature')
+	else:
+		ts_dict[ifp_id][date] = row.drop(labels=['ifp_id', 'date']).values
+
+
+for index, row in ts_feature_rctc.iterrows():
+	discover_id = row['ifp_id']
+	ifp_id = discover2ifp[discover_id]
+	date = row['date']
+
+	if date in ts_dict[ifp_id]:
+		pdb.set_trace()
+		print('Duplicate feature')
+	else:
+		pdb.set_trace()
+		ts_dict[ifp_id][date] = row.drop(labels=['ifp_id', 'date']).values
 
 def get_feature(ifp_id, date):
 	if ifp_id in human_dict and date in human_dict[ifp_id]:
@@ -517,7 +533,10 @@ loss_3_2 = tf.math.reduce_sum(tf.math.squared_difference(prob_3_2, true_3_2), ax
 loss_brier_3 = tf.math.reduce_mean(tf.stack([loss_3_1, loss_3_2], axis=1), axis=1)
 
 loss_combined = tf.where(is_ordered_placeholder, tf.where(is_4_placeholder, loss_brier_4, tf.where(is_3_placeholder, loss_brier_3, loss_brier)), loss_mse)
+avg_loss = tf.reduce_mean(loss_combined)
+diff_loss = tf.clip_by_value(loss_combined - avg_loss, 0, 100)
 
+loss_combined = loss_combined + 0.1 * diff_loss
 loss_weighted = tf.losses.compute_weighted_loss(loss_combined, weight_placeholder)
 
 loss_weighted_reg = loss_weighted

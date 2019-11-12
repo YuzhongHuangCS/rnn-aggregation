@@ -7,16 +7,17 @@ import numpy as np
 db = {}
 
 name_map = {
-	'M0': 'm0',
-	'M1': 'm1',
+	#'M0': 'm0',
+	#'M1': 'm1',
 	'M2': 'm2',
-	'M2 + feature  ': 'm3',
-	'  Transformer': 'transformer',
-	'RNN': 'rnn'
+	#'M2 + feature  ': 'm3',
+	#'  Transformer': 'transformer',
+	'RNN': 'rnn',
+	'RNN2': 'rnn2'
 }
-for model in ('M0', 'M1', 'M2', 'M2 + feature  ', '  Transformer', 'RNN',):
+for model in ('M2', 'RNN', 'RNN2'):
 	model_name = name_map[model]
-	for i in range(5):
+	for i in [0, 1, 2]:
 		filename = 'plot_data/{}_brier_db_{}.pickle'.format(model_name, i)
 		with open(filename, 'rb') as fin:
 			db_brier = pickle.load(fin)

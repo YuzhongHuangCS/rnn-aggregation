@@ -23,6 +23,7 @@ from datetime import datetime, timedelta
 import math
 from nltk.tokenize import word_tokenize
 from utils import is_ordered, initialize_embedding, embedding_lookup
+import time
 
 if len(sys.argv) >= 3:
 	model_name = sys.argv[1]
@@ -643,6 +644,10 @@ loss_brier_3 = tf.math.reduce_mean(tf.stack([loss_3_1, loss_3_2], axis=1), axis=
 
 loss_combined = tf.where(is_ordered_placeholder, tf.where(is_4_placeholder, loss_brier_4, tf.where(is_3_placeholder, loss_brier_3, loss_brier)), loss_mse)
 
+avg_loss = tf.reduce_mean(loss_combined)
+diff_loss = tf.clip_by_value(loss_combined - avg_loss, 0, 100)
+
+loss_combined = loss_combined + 0.1 * diff_loss
 loss_weighted = tf.losses.compute_weighted_loss(loss_combined, weight_placeholder)
 
 loss_weighted_reg = loss_weighted
@@ -689,6 +694,7 @@ with tf.Session() as sess:
 		sess.run(ops)
 
 	for i in range(50):
+		t1 = time.time()
 		train_loss, train_pred, _train_step = sess.run(
 			[loss_weighted, prob, train_op],
 				feed_dict={
@@ -707,6 +713,10 @@ with tf.Session() as sess:
 					is_training: True
 				}
 		)
+		t2 = time.time()
+		diff = t1-t2
+		print(i, diff)
+		#pdb.set_trace()
 
 		valid_loss, valid_pred = sess.run(
 			[loss_weighted, prob],

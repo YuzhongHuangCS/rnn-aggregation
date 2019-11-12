@@ -23,6 +23,7 @@ from datetime import datetime, timedelta
 import math
 from nltk.tokenize import word_tokenize
 from utils import is_ordered, initialize_embedding, embedding_lookup
+import time
 
 if len(sys.argv) >= 3:
 	model_name = sys.argv[1]
@@ -697,6 +698,7 @@ with tf.Session() as sess:
 		sess.run(ops)
 
 	for i in range(100):
+		t1 = time.time()
 		train_loss, train_pred, _train_step = sess.run(
 			[loss_weighted, prob, train_op],
 				feed_dict={
@@ -714,6 +716,9 @@ with tf.Session() as sess:
 					is_training: True
 				}
 		)
+		t2 = time.time()
+		diff = t1-t2
+		print(i, diff)
 
 		valid_loss, valid_pred = sess.run(
 			[loss_weighted, prob],

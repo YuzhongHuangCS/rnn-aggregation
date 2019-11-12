@@ -20,7 +20,7 @@ for fold_index in range(5):
 	ckpt_path = log_dir + '/model.ckpt.index'
 	if os.path.exists(ckpt_path):
 		continue
-	cmd = 'taskset -c {} python3 -u rnn_agg_train.py {} {} "{}" > {}'.format(40+fold_index, model_name, fold_index, 'rnn_model', log_path)
+	cmd = 'taskset -c {} python3 -u rnn_agg_train.py {} {} "{}" > {}'.format(fold_index, model_name, fold_index, 'rnn_model', log_path)
 	print(cmd)
 	executor.submit(os.system, cmd)
 

@@ -41,13 +41,20 @@ db_answer = {}
 db_boundary = {}
 db_emb = {}
 
+ifp_rctc = []
 # 1. db_date is first computed by question dump
 # 2. db_date is then adjusted by actual forecasts
-for filename in ('data/dump_questions_rcta.csv', 'data/dump_questions_rctb.csv'):
+#for filename in ('data/dump_questions_rctb.csv', 'data/dump_questions_rctc.csv'):
+for filename in ('data/dump_questions_rcta.csv', 'data/dump_questions_rctb.csv', 'data/dump_questions_rctc.csv'):
 	df_question = pd.read_csv(filename)
 	for index, row in df_question.iterrows():
 		if row['is_resolved'] and (not row['is_voided']):
-			ifp_id = row['ifp_id']
+			if filename == 'data/dump_questions_rctc.csv':
+				ifp_id = row['hfc_id']
+				ifp_rctc.append(ifp_id)
+			else:
+				ifp_id = row['ifp_id']
+
 			resolution = row['resolution']
 			options = row.tolist()[-5:]
 
@@ -99,10 +106,11 @@ if feature_used is not None:
 			hf_cols.remove(fu)
 
 human_feature = human_feature.drop(columns=hf_cols)
+human_feature_rctc = pd.read_csv('data/human_features_rctc.csv').drop_duplicates(subset=['date', 'ifp_id'], keep='last')[human_feature.columns]
 
 ts_feature_list = ['diff2_acf10', 'entropy', 'diff1_acf10', 'seas_pacf', 'linearity', 'spike', 'nonlinearity', 'diff1x_pacf5', 'e_acf10', 'series_length', 'hurst', 'ARCH.LM', 'ratio', 'seas_acf1', 'x_acf1', 'crossing_points', 'x_pacf5', 'diff1_acf1', 'trend', 'trough', 'unitroot_pp', 'diff2x_pacf5', 'x_acf10', 'nperiods', 'flat_spots', 'seasonal_period', 'peak', 'beta', 'diff2_acf1', 'lumpiness', 'e_acf1', 'skew', 'curvature', 'alpha', 'unitroot_kpss', 'seasonal_strength', 'stability']
-ts_feature = pd.read_csv('data/ts_features.csv')
-tf_cols = ts_feature.columns.tolist()
+ts_feature_rctc = pd.read_csv('data/ts_features_rctc.csv')
+tf_cols = ts_feature_rctc.columns.tolist()
 tf_cols.remove('ifp_id')
 tf_cols.remove('date')
 tf_cols.remove('ratio')
@@ -110,34 +118,38 @@ if feature_used is not None:
 	for fu in feature_used:
 		if fu in ts_feature_list and fu in tf_cols:
 			tf_cols.remove(fu)
-ts_feature = ts_feature.drop(columns=tf_cols)
+ts_feature_rctc = ts_feature_rctc.drop(columns=tf_cols)
+ts_feature = pd.read_csv('data/ts_features.csv')[ts_feature_rctc.columns]
 
 n_feature = human_feature.shape[1] + ts_feature.shape[1] - 4
 print(human_feature.columns)
 print(ts_feature.columns)
 print('n_feature', n_feature)
+#pdb.set_trace()
 
 human_dict = defaultdict(dict)
-for index, row in human_feature.iterrows():
-	ifp_id = row['ifp_id']
-	date = row['date']
+for h_f in (human_feature, human_feature_rctc):
+	for index, row in h_f.iterrows():
+		ifp_id = row['ifp_id']
+		date = row['date']
 
-	if date in human_dict[ifp_id]:
-		pdb.set_trace()
-		print('Duplicate feature')
-	else:
-		human_dict[ifp_id][date] = row.drop(labels=['ifp_id', 'date']).values
+		if date in human_dict[ifp_id]:
+			pdb.set_trace()
+			print('Duplicate feature')
+		else:
+			human_dict[ifp_id][date] = row.drop(labels=['ifp_id', 'date']).values
 
 ts_dict = defaultdict(dict)
-for index, row in ts_feature.iterrows():
-	ifp_id = row['ifp_id']
-	date = row['date']
+for t_f in (ts_feature, ts_feature_rctc):
+	for index, row in t_f.iterrows():
+		ifp_id = row['ifp_id']
+		date = row['date']
 
-	if date in ts_dict[ifp_id]:
-		pdb.set_trace()
-		print('Duplicate feature')
-	else:
-		ts_dict[ifp_id][date] = row.drop(labels=['ifp_id', 'date']).values
+		if date in ts_dict[ifp_id]:
+			pdb.set_trace()
+			print('Duplicate feature')
+		else:
+			ts_dict[ifp_id][date] = row.drop(labels=['ifp_id', 'date']).values
 
 def get_feature(ifp_id, date):
 	if ifp_id in human_dict and date in human_dict[ifp_id]:
@@ -159,18 +171,24 @@ def get_feature(ifp_id, date):
 	return cf
 
 db = defaultdict(list)
-for filename in ('data/dump_user_forecasts_rcta.csv', 'data/dump_user_forecasts_rctb.csv'):
+for filename in ('data/dump_user_forecasts_rcta.csv', 'data/dump_user_forecasts_rctb.csv', 'data/dump_user_forecasts_rctc.csv'):
 	df = pd.read_csv(filename)
 	for index, row in df.iterrows():
 		date = dateutil.parser.parse(row['date']).replace(tzinfo=None)
 
-		ifp_id = row['ifp_id']
+		if filename == 'data/dump_user_forecasts_rctc.csv':
+			ifp_id = row['hfc_id']
+		else:
+			ifp_id = row['ifp_id']
+
 		if ifp_id not in db_answer:
 			continue
 
 		user_id = row['user_id']
 		if filename == 'data/dump_user_forecasts_rctb.csv':
 			user_id += 100000
+		elif filename == 'data/dump_user_forecasts_rctc.csv':
+			user_id += 200000
 
 		num_options = row['num_options']
 		option_1 = row['option_1'] / 100.0
@@ -255,16 +273,15 @@ all_ifp = np.asarray(list(db.keys()))
 kf = sklearn.model_selection.KFold(shuffle=True, n_splits=5, random_state=1)
 folds = [[all_ifp[f[0]], all_ifp[f[1]]] for f in kf.split(all_ifp)]
 
-#ifp_train_valid = folds[fold_index][0]
-ifp_train_valid = all_ifp
+ifp_train_valid = folds[fold_index][0]
 ifp_test = folds[fold_index][1]
 n_train_valid = len(ifp_train_valid)
 n_test = len(ifp_test)
 
-ifp_train = folds[fold_index][0]
-ifp_valid = folds[fold_index][1]
-n_train = len(ifp_train)
-n_valid = len(ifp_valid)
+n_train = int(n_train_valid*0.9)
+n_valid = n_train_valid - n_train
+ifp_train = ifp_train_valid[n_valid:]
+ifp_valid = ifp_train_valid[:n_valid]
 
 print('max_steps', max_steps)
 print('n_train', n_train)
@@ -272,6 +289,24 @@ print('n_train_valid', n_train_valid)
 print('n_valid', n_valid)
 print('n_test', n_test)
 
+'''
+ifp_train_valid = folds[fold_index][0]
+ifp_test = folds[fold_index][1]
+n_train_valid = len(ifp_train_valid)
+n_test = len(ifp_test)
+
+#ifp_rctc = set(ifp_rctc)
+#ifp_train = list(set(all_ifp).difference(ifp_rctc))
+#ifp_valid = list(ifp_rctc)
+n_train = len(ifp_train)
+n_valid = len(ifp_valid)
+
+print('max_steps', max_steps)
+print('n_train', n_train)
+#print('n_train_valid', n_train_valid)
+print('n_valid', n_valid)
+#print('n_test', n_test)
+'''
 N_RNN_DIM = 32
 N_EMB_DIM = 4
 
@@ -320,7 +355,11 @@ for index, ifp in enumerate(ifp_train):
 	target_train[forecast_index:forecast_index+n_forecasts, answer] = 1
 	answer_train[forecast_index:forecast_index+n_forecasts] = answer
 	is_ordered_train[forecast_index:forecast_index+n_forecasts] = is_ordered
-	weight_train[forecast_index:forecast_index+n_forecasts] = ((1.0 / n_forecasts) / n_train) * n_forecast_train
+	if ifp in ifp_rctc:
+		weight = 1
+	else:
+		weight = 1
+	weight_train[forecast_index:forecast_index+n_forecasts] = (((1.0 / n_forecasts) / n_train) * n_forecast_train)*weight
 	seq_length_train[index] = len(forecasts)
 	seq_length_mask_train[index, :len(forecasts), :len(forecasts)] = 0
 
@@ -408,133 +447,6 @@ for index, ifp in enumerate(ifp_valid):
 	forecast_index += n_forecasts
 
 input_valid[np.isnan(input_valid)] = 0
-
-### TRAIN VALID data
-n_forecast_train_valid = sum([len(v) for k, v in db_dates.items() if k in ifp_train_valid])
-
-input_train_valid = np.zeros((n_train_valid, max_steps, 5 + n_feature))
-id_train_valid = np.zeros((n_train_valid, max_steps), dtype=int)
-state_train_valid = np.zeros((n_train_valid, 300))
-target_train_valid = np.zeros((n_forecast_train_valid, 5))
-answer_train_valid = np.zeros(n_forecast_train_valid, dtype=int)
-is_ordered_train_valid = np.zeros(n_forecast_train_valid, dtype=bool)
-is_4_train_valid = np.zeros(n_forecast_train_valid, dtype=bool)
-is_3_train_valid = np.zeros(n_forecast_train_valid, dtype=bool)
-weight_train_valid = np.zeros(n_forecast_train_valid)
-seq_length_train_valid = np.zeros(n_train_valid, dtype=int)
-seq_length_mask_train_valid = np.full((n_train_valid, max_steps, max_steps), -1e32)
-gather_index_train_valid = np.zeros((n_forecast_train_valid, 2), dtype=int)
-num_option_ary_train_valid = np.zeros(n_forecast_train_valid, dtype=int)
-num_option_mask_train_valid = np.full((n_forecast_train_valid, 5), -1e32)
-index_map_train_valid = {}
-
-forecast_index = 0
-for index, ifp in enumerate(ifp_train_valid):
-	forecasts = db[ifp]
-
-	for i, forecast in enumerate(forecasts):
-		input_train_valid[index, i] = forecast[4:]
-		forecaster_id = id2index.get(forecast[1], 1)
-		id_train_valid[index, i] = forecaster_id
-
-	state_train_valid[index] = db_emb[ifp]
-	forecast_dates = db_dates[ifp]
-	n_forecasts = len(forecast_dates)
-	activity_dates = [x[0] for x in forecasts]
-
-	answer, is_ordered = db_answer[ifp]
-	target_train_valid[forecast_index:forecast_index+n_forecasts, answer] = 1
-	answer_train_valid[forecast_index:forecast_index+n_forecasts] = answer
-	is_ordered_train_valid[forecast_index:forecast_index+n_forecasts] = is_ordered
-	weight_train_valid[forecast_index:forecast_index+n_forecasts] = ((1.0 / n_forecasts) / n_train_valid) * n_forecast_train_valid
-	seq_length_train_valid[index] = len(forecasts)
-	seq_length_mask_train_valid[index, :len(forecasts), :len(forecasts)] = 0
-
-	for i, forecast_date in enumerate(forecast_dates):
-		this_index = np.searchsorted(activity_dates, forecast_date)
-		if this_index == 0:
-			pdb.set_trace()
-			print('Unexpected. Forecast dates have been adjusted for activity dates')
-		gather_index_train_valid[forecast_index+i, :] = [index, this_index-1]
-
-	num_options = forecasts[0][3]
-	if num_options == 4:
-		is_4_train_valid[forecast_index:forecast_index+n_forecasts] = True
-	else:
-		if num_options == 3:
-			is_3_train_valid[forecast_index:forecast_index+n_forecasts] = True
-
-	num_option_ary_train_valid[forecast_index:forecast_index+n_forecasts] = num_options
-	num_option_mask_train_valid[forecast_index:forecast_index+n_forecasts, :num_options] = 0
-
-	index_map_train_valid[ifp] = list(range(forecast_index, forecast_index+n_forecasts))
-	forecast_index += n_forecasts
-
-input_train_valid[np.isnan(input_train_valid)] = 0
-
-### TEST data
-n_forecast_test = sum([len(v) for k, v in db_dates.items() if k in ifp_test])
-
-input_test = np.zeros((n_test, max_steps, 5 + n_feature))
-id_test = np.zeros((n_test, max_steps), dtype=int)
-state_test = np.zeros((n_test, 300))
-target_test = np.zeros((n_forecast_test, 5))
-answer_test = np.zeros(n_forecast_test, dtype=int)
-is_ordered_test = np.zeros(n_forecast_test, dtype=bool)
-is_4_test = np.zeros(n_forecast_test, dtype=bool)
-is_3_test = np.zeros(n_forecast_test, dtype=bool)
-weight_test = np.zeros(n_forecast_test)
-seq_length_test = np.zeros(n_test, dtype=int)
-seq_length_mask_test = np.full((n_test, max_steps, max_steps), -1e32)
-gather_index_test = np.zeros((n_forecast_test, 2), dtype=int)
-num_option_ary_test = np.zeros(n_forecast_test, dtype=int)
-num_option_mask_test = np.full((n_forecast_test, 5), -1e32)
-index_map_test = {}
-
-forecast_index = 0
-for index, ifp in enumerate(ifp_test):
-	forecasts = db[ifp]
-
-	for i, forecast in enumerate(forecasts):
-		input_test[index, i] = forecast[4:]
-
-		forecaster_id = id2index.get(forecast[1], 1)
-		id_test[index, i] = forecaster_id
-
-	state_test[index] = db_emb[ifp]
-	forecast_dates = db_dates[ifp]
-	n_forecasts = len(forecast_dates)
-	activity_dates = [x[0] for x in forecasts]
-
-	answer, is_ordered = db_answer[ifp]
-	target_test[forecast_index:forecast_index+n_forecasts, answer] = 1
-	answer_test[forecast_index:forecast_index+n_forecasts] = answer
-	is_ordered_test[forecast_index:forecast_index+n_forecasts] = is_ordered
-	weight_test[forecast_index:forecast_index+n_forecasts] = ((1.0 / n_forecasts) / n_test) * n_forecast_test
-	seq_length_test[index] = len(forecasts)
-	seq_length_mask_test[index, :len(forecasts), :len(forecasts)] = 0
-
-	for i, forecast_date in enumerate(forecast_dates):
-		this_index = np.searchsorted(activity_dates, forecast_date)
-		if this_index == 0:
-			pdb.set_trace()
-			print('Unexpected. Forecast dates have been adjusted for activity dates')
-		gather_index_test[forecast_index+i, :] = [index, this_index-1]
-
-	num_options = forecasts[0][3]
-	if num_options == 4:
-		is_4_test[forecast_index:forecast_index+n_forecasts] = True
-	else:
-		if num_options == 3:
-			is_3_test[forecast_index:forecast_index+n_forecasts] = True
-
-	num_option_ary_test[forecast_index:forecast_index+n_forecasts] = num_options
-	num_option_mask_test[forecast_index:forecast_index+n_forecasts, :num_options] = 0
-
-	index_map_test[ifp] = list(range(forecast_index, forecast_index+n_forecasts))
-	forecast_index += n_forecasts
-
-input_test[np.isnan(input_test)] = 0
 
 # Network placeholder
 is_training = tf.placeholder_with_default(False, shape=(), name='is_training')
@@ -626,6 +538,10 @@ loss_brier_3 = tf.math.reduce_mean(tf.stack([loss_3_1, loss_3_2], axis=1), axis=
 
 loss_combined = tf.where(is_ordered_placeholder, tf.where(is_4_placeholder, loss_brier_4, tf.where(is_3_placeholder, loss_brier_3, loss_brier)), loss_mse)
 
+avg_loss = tf.reduce_mean(loss_combined)
+diff_loss = tf.clip_by_value(loss_combined - avg_loss, 0, 100)
+
+loss_combined = loss_combined + 0.1 * diff_loss
 loss_weighted = tf.losses.compute_weighted_loss(loss_combined, weight_placeholder)
 
 loss_weighted_reg = loss_weighted
@@ -670,7 +586,7 @@ with tf.Session() as sess:
 			ops.append(tf.assign(tf_vars[i_tf], smallest_weight[i_tf]))
 		sess.run(ops)
 
-	for i in range(50):
+	for i in range(200):
 		train_loss, train_pred, _train_step = sess.run(
 			[loss_weighted, prob, train_op],
 				feed_dict={
@@ -709,27 +625,8 @@ with tf.Session() as sess:
 				}
 		)
 
-		test_loss, test_pred = sess.run(
-			[loss_weighted, prob],
-				feed_dict={
-					input_placeholder: input_test,
-					id_placeholder: id_test,
-					target_placeholder: target_test,
-					is_ordered_placeholder: is_ordered_test,
-					is_4_placeholder: is_4_test,
-					is_3_placeholder: is_3_test,
-					weight_placeholder: weight_test,
-					seq_length_placeholder: seq_length_test,
-					seq_length_mask_placeholder: seq_length_mask_test,
-					gather_index_placeholder: gather_index_test,
-					num_option_mask_placeholder: num_option_mask_test,
-					initial_state: state_test,
-					is_training: False
-				}
-		)
-
 		valid_scores.append(valid_loss)
-		print('Epoch: {}, train loss: {}, valid loss: {}, min valid loss so far: {}, test loss: {}'.format(i, train_loss, valid_loss, np.min(valid_scores), test_loss))
+		print('Epoch: {}, train loss: {}, valid loss: {}, min valid loss so far: {}'.format(i, train_loss, valid_loss, np.min(valid_scores)))
 
 		if valid_loss < smallest_loss:
 			smallest_loss = valid_loss
@@ -753,7 +650,6 @@ with tf.Session() as sess:
 		if i == 0:
 			train_briers = np.asarray([brier(p[:num_option_ary_train[i]], answer_train[i], is_ordered_train[i]) for i, p in enumerate(train_pred)])
 			valid_briers = np.asarray([brier(p[:num_option_ary_valid[i]], answer_valid[i], is_ordered_valid[i]) for i, p in enumerate(valid_pred)])
-			test_briers = np.asarray([brier(p[:num_option_ary_test[i]], answer_test[i], is_ordered_test[i]) for i, p in enumerate(test_pred)])
 
 			db_brier_train = {}
 			for ifp in ifp_train:
@@ -767,84 +663,10 @@ with tf.Session() as sess:
 				scores = valid_briers[index]
 				db_brier_valid[ifp] = np.mean(scores)
 
-			db_brier_test = {}
-			for ifp in ifp_test:
-				index = index_map_test[ifp]
-				scores = test_briers[index]
-				db_brier_test[ifp] = np.mean(scores)
+			print(i, train_loss, valid_loss, np.mean(list(db_brier_train.values())), np.mean(list(db_brier_valid.values())))
 
-			print(i, train_loss, valid_loss, test_loss, np.mean(list(db_brier_train.values())), np.mean(list(db_brier_valid.values())), np.mean(list(db_brier_test.values())))
-
+	print('Reload weight')
 	_load_weights()
-	print('Fine tuning...')
-	train_valid_loss, train_valid_pred = sess.run(
-		[loss_weighted, prob],
-			feed_dict={
-				input_placeholder: input_train_valid,
-				id_placeholder: id_train_valid,
-				target_placeholder: target_train_valid,
-				is_ordered_placeholder: is_ordered_train_valid,
-				is_4_placeholder: is_4_train_valid,
-				is_3_placeholder: is_3_train_valid,
-				weight_placeholder: weight_train_valid,
-				seq_length_placeholder: seq_length_train_valid,
-				seq_length_mask_placeholder: seq_length_mask_train_valid,
-				gather_index_placeholder: gather_index_train_valid,
-				num_option_mask_placeholder: num_option_mask_train_valid,
-				initial_state: state_train_valid,
-				is_training: True
-			}
-	)
-
-	print('Smallest train loss: {}, current train valid loss: {}'.format(smallest_train_loss, train_valid_loss))
-
-	for i in range(50):
-		if train_valid_loss < smallest_train_loss:
-			break
-
-		train_valid_loss, train_valid_pred, _train_step = sess.run(
-			[loss_weighted, prob, train_op],
-				feed_dict={
-					input_placeholder: input_train_valid,
-					id_placeholder: id_train_valid,
-					target_placeholder: target_train_valid,
-					is_ordered_placeholder: is_ordered_train_valid,
-					is_4_placeholder: is_4_train_valid,
-					is_3_placeholder: is_3_train_valid,
-					weight_placeholder: weight_train_valid,
-					seq_length_placeholder: seq_length_train_valid,
-					seq_length_mask_placeholder: seq_length_mask_train_valid,
-					gather_index_placeholder: gather_index_train_valid,
-					num_option_mask_placeholder: num_option_mask_train_valid,
-					initial_state: state_train_valid,
-					is_training: True
-				}
-		)
-
-		test_loss, test_pred = sess.run(
-			[loss_weighted, prob],
-				feed_dict={
-					input_placeholder: input_test,
-					id_placeholder: id_test,
-					target_placeholder: target_test,
-					is_ordered_placeholder: is_ordered_test,
-					is_4_placeholder: is_4_test,
-					is_3_placeholder: is_3_test,
-					weight_placeholder: weight_test,
-					seq_length_placeholder: seq_length_test,
-					seq_length_mask_placeholder: seq_length_mask_test,
-					gather_index_placeholder: gather_index_test,
-					num_option_mask_placeholder: num_option_mask_test,
-					initial_state: state_test,
-					is_training: False
-				}
-		)
-
-		print('Fine tune Epoch: {}, train loss: {}, test loss: {}'.format(i, train_valid_loss, test_loss))
-
-
-	_save_weight()
-	print('final test loss', test_loss)
 
 	with open(save_path.replace('.ckpt', '.pickle'), 'wb') as fout:
 		pickle.dump(smallest_weight, fout, pickle.HIGHEST_PROTOCOL)
