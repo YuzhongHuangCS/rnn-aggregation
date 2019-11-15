@@ -1,11 +1,11 @@
 import os
 
 # uncomment to force CPU training
-os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
 # optimize CPU performance
-os.environ['KMP_BLOCKTIME'] = '0'
-os.environ['KMP_AFFINITY'] = 'granularity=fine,verbose,compact,1,0'
+#os.environ['KMP_BLOCKTIME'] = '0'
+#os.environ['KMP_AFFINITY'] = 'granularity=fine,verbose,compact,1,0'
 
 import pandas as pd
 import pdb
@@ -43,15 +43,18 @@ db_emb = {}
 
 # 1. db_date is first computed by question dump
 # 2. db_date is then adjusted by actual forecasts
+discover2ifp = {}
 for filename in ('data/dump_questions_rcta.csv', 'data/dump_questions_rctb.csv', 'data/dump_questions_rctc.csv'):
 	df_question = pd.read_csv(filename)
 	for index, row in df_question.iterrows():
-		if row['is_resolved'] and (not row['is_voided']):
-			if filename == 'data/dump_questions_rctc.csv':
-				ifp_id = row['hfc_id']
-			else:
-				ifp_id = row['ifp_id']
+		if filename == 'data/dump_questions_rctc.csv':
+			ifp_id = row['hfc_id']
+			discover_id = row['discover_id']
+			discover2ifp[discover_id] = ifp_id
+		else:
+			ifp_id = row['ifp_id']
 
+		if row['is_resolved'] and (not row['is_voided']):
 			resolution = row['resolution']
 			options = row.tolist()[-5:]
 
@@ -134,16 +137,30 @@ for h_f in (human_feature, human_feature_rctc):
 			human_dict[ifp_id][date] = row.drop(labels=['ifp_id', 'date']).values
 
 ts_dict = defaultdict(dict)
-for t_f in (ts_feature, ts_feature_rctc):
-	for index, row in t_f.iterrows():
-		ifp_id = row['ifp_id']
-		date = row['date']
+for index, row in ts_feature.iterrows():
+	ifp_id = row['ifp_id']
+	date = row['date']
 
-		if date in ts_dict[ifp_id]:
-			pdb.set_trace()
-			print('Duplicate feature')
-		else:
-			ts_dict[ifp_id][date] = row.drop(labels=['ifp_id', 'date']).values
+	if date in ts_dict[ifp_id]:
+		pdb.set_trace()
+		print('Duplicate feature')
+	else:
+		ts_dict[ifp_id][date] = row.drop(labels=['ifp_id', 'date']).values
+
+
+for index, row in ts_feature_rctc.iterrows():
+	discover_id = row['ifp_id']
+	try:
+		ifp_id = discover2ifp[discover_id]
+	except KeyError as e:
+		pdb.set_trace()
+	date = row['date']
+
+	if date in ts_dict[ifp_id]:
+		pdb.set_trace()
+		print('Duplicate feature')
+	else:
+		ts_dict[ifp_id][date] = row.drop(labels=['ifp_id', 'date']).values
 
 def get_feature(ifp_id, date):
 	if ifp_id in human_dict and date in human_dict[ifp_id]:
@@ -276,11 +293,11 @@ print('max_steps', max_steps)
 print('n_train', n_train)
 print('n_valid', n_valid)
 
-N_Q_DIM = 32
-N_K_DIM = 32
-N_V_DIM = 32
-N_WORD2VEC_DIM = 32
-N_EMB_DIM = 8
+#N_Q_DIM = 64
+N_K_DIM = 64
+N_V_DIM = 64
+N_EMB_DIM = 64
+N_POS_DIM = 1
 
 special_symbol = {
 	'padding': 0,
@@ -297,246 +314,214 @@ for index, value in enumerate(id_counter.most_common()):
 	id2index[value[0]] = index + len(special_symbol)
 
 ### TRAIN data
-n_forecast_train = sum([len(v) for k, v in db_dates.items() if k in ifp_train])
+def get_data(ifp):
+	n = len(ifp)
+	n_forecast = sum([len(v) for k, v in db_dates.items() if k in ifp])
+	inputs = np.zeros((n, max_steps, 5 + n_feature + N_POS_DIM), dtype=np.float32)
+	ids = np.zeros((n, max_steps), dtype=np.int32)
+	state = np.zeros((n, 300), dtype=np.float32)
+	target = np.zeros((n_forecast, 5), dtype=np.float32)
+	answer = np.zeros(n_forecast, dtype=np.int32)
+	is_ordered = np.zeros(n_forecast, dtype=bool)
+	is_4 = np.zeros(n_forecast, dtype=bool)
+	is_3 = np.zeros(n_forecast, dtype=bool)
+	weight = np.zeros(n_forecast, dtype=np.float32)
+	seq_length_mask = np.zeros((n, max_steps, max_steps), dtype=np.float32)
+	gather_index = np.zeros((n_forecast, 2), dtype=np.int32)
+	num_option_ary = np.zeros(n_forecast, dtype=np.int32)
+	num_option_mask = np.full((n_forecast, 5), -1e32, dtype=np.float32)
+	index_map = {}
 
-input_train = np.zeros((n_train, max_steps, 5 + n_feature))
-id_train = np.zeros((n_train, max_steps), dtype=int)
-state_train = np.zeros((n_forecast_train, 300))
-target_train = np.zeros((n_forecast_train, 5))
-answer_train = np.zeros(n_forecast_train, dtype=int)
-is_ordered_train = np.zeros(n_forecast_train, dtype=bool)
-is_4_train = np.zeros(n_forecast_train, dtype=bool)
-is_3_train = np.zeros(n_forecast_train, dtype=bool)
-weight_train = np.zeros(n_forecast_train)
-seq_length_mask_train = np.full((n_train, max_steps, max_steps), -1e32)
-gather_index_train = np.zeros((n_forecast_train, 2), dtype=int)
-num_option_ary_train = np.zeros(n_forecast_train, dtype=int)
-num_option_mask_train = np.full((n_forecast_train, 5), -1e32)
-index_map_train = {}
+	forecast_index = 0
+	for index, ifp in enumerate(ifp):
+		forecasts = db[ifp]
 
-forecast_index = 0
-for index, ifp in enumerate(ifp_train):
-	forecasts = db[ifp]
+		n_total = len(forecasts)
+		for i, forecast in enumerate(forecasts):
+			inputs[index, i] = forecast[4:] + [i/n_total]
+			forecaster_id = id2index.get(forecast[1], 1)
+			ids[index, i] = forecaster_id
 
-	for i, forecast in enumerate(forecasts):
-		input_train[index, i] = forecast[4:]
-		forecaster_id = id2index.get(forecast[1], 1)
-		id_train[index, i] = forecaster_id
+		forecast_dates = db_dates[ifp]
+		n_forecasts = len(forecast_dates)
+		activity_dates = [x[0] for x in forecasts]
 
-	forecast_dates = db_dates[ifp]
-	n_forecasts = len(forecast_dates)
-	activity_dates = [x[0] for x in forecasts]
+		ans, ordered = db_answer[ifp]
+		target[forecast_index:forecast_index+n_forecasts, ans] = 1
+		answer[forecast_index:forecast_index+n_forecasts] = ans
+		is_ordered[forecast_index:forecast_index+n_forecasts] = ordered
+		weight[forecast_index:forecast_index+n_forecasts] = ((1.0 / n_forecasts) / n) * n_forecast
+		state[index] = db_emb[ifp]
+		seq_length_mask[index, :len(forecasts), :len(forecasts)] = 1
 
-	answer, is_ordered = db_answer[ifp]
-	target_train[forecast_index:forecast_index+n_forecasts, answer] = 1
-	answer_train[forecast_index:forecast_index+n_forecasts] = answer
-	is_ordered_train[forecast_index:forecast_index+n_forecasts] = is_ordered
-	weight_train[forecast_index:forecast_index+n_forecasts] = ((1.0 / n_forecasts) / n_train) * n_forecast_train
-	state_train[forecast_index:forecast_index+n_forecasts] = db_emb[ifp]
-	seq_length_mask_train[index, :len(forecasts), :len(forecasts)] = 0
+		for i, forecast_date in enumerate(forecast_dates):
+			this_index = np.searchsorted(activity_dates, forecast_date)
+			if this_index == 0:
+				pdb.set_trace()
+				print('Unexpected. Forecast dates have been adjusted for activity dates')
+			gather_index[forecast_index+i, :] = [index, this_index-1]
 
-	for i, forecast_date in enumerate(forecast_dates):
-		this_index = np.searchsorted(activity_dates, forecast_date)
-		if this_index == 0:
-			pdb.set_trace()
-			print('Unexpected. Forecast dates have been adjusted for activity dates')
-		gather_index_train[forecast_index+i, :] = [index, this_index-1]
+		num_options = forecasts[0][3]
+		if num_options == 4:
+			is_4[forecast_index:forecast_index+n_forecasts] = True
+		else:
+			if num_options == 3:
+				is_3[forecast_index:forecast_index+n_forecasts] = True
 
-	num_options = forecasts[0][3]
-	if num_options == 4:
-		is_4_train[forecast_index:forecast_index+n_forecasts] = True
-	else:
-		if num_options == 3:
-			is_3_train[forecast_index:forecast_index+n_forecasts] = True
+		num_option_ary[forecast_index:forecast_index+n_forecasts] = num_options
+		num_option_mask[forecast_index:forecast_index+n_forecasts, :num_options] = 0
 
-	num_option_ary_train[forecast_index:forecast_index+n_forecasts] = num_options
-	num_option_mask_train[forecast_index:forecast_index+n_forecasts, :num_options] = 0
+		index_map[ifp] = list(range(forecast_index, forecast_index+n_forecasts))
+		forecast_index += n_forecasts
 
-	index_map_train[ifp] = list(range(forecast_index, forecast_index+n_forecasts))
-	forecast_index += n_forecasts
+	inputs[np.isnan(inputs)] = 0
+	input_ds = tf.data.Dataset.from_tensors(inputs)
+	id_ds = tf.data.Dataset.from_tensors(ids)
+	target_ds = tf.data.Dataset.from_tensors(target)
+	is_ordered_ds = tf.data.Dataset.from_tensors(is_ordered)
+	is_4_ds = tf.data.Dataset.from_tensors(is_4)
+	is_3_ds = tf.data.Dataset.from_tensors(is_3)
+	weight_ds = tf.data.Dataset.from_tensors(weight)
+	seq_length_mask_ds = tf.data.Dataset.from_tensors(seq_length_mask)
+	gather_index_ds = tf.data.Dataset.from_tensors(gather_index)
+	num_option_mask_ds = tf.data.Dataset.from_tensors(num_option_mask)
+	state_ds = tf.data.Dataset.from_tensors(state)
 
-input_train[np.isnan(input_train)] = 0
+	all_iter = tf.data.Dataset.zip((input_ds, id_ds, target_ds, is_ordered_ds, is_4_ds, is_3_ds, weight_ds, seq_length_mask_ds, gather_index_ds, num_option_mask_ds, state_ds)).repeat(-1).make_one_shot_iterator()
+	return all_iter, num_option_ary, index_map, answer, is_ordered
 
-### VALID data
-n_forecast_valid = sum([len(v) for k, v in db_dates.items() if k in ifp_valid])
-
-input_valid = np.zeros((n_valid, max_steps, 5 + n_feature))
-id_valid = np.zeros((n_valid, max_steps), dtype=int)
-state_valid = np.zeros((n_forecast_valid, 300))
-target_valid = np.zeros((n_forecast_valid, 5))
-answer_valid = np.zeros(n_forecast_valid, dtype=int)
-is_ordered_valid = np.zeros(n_forecast_valid, dtype=bool)
-is_4_valid = np.zeros(n_forecast_valid, dtype=bool)
-is_3_valid = np.zeros(n_forecast_valid, dtype=bool)
-weight_valid = np.zeros(n_forecast_valid)
-seq_length_mask_valid = np.full((n_valid, max_steps, max_steps), -1e32)
-gather_index_valid = np.zeros((n_forecast_valid, 2), dtype=int)
-num_option_ary_valid = np.zeros(n_forecast_valid, dtype=int)
-num_option_mask_valid = np.full((n_forecast_valid, 5), -1e32)
-index_map_valid = {}
-
-forecast_index = 0
-for index, ifp in enumerate(ifp_valid):
-	forecasts = db[ifp]
-
-	for i, forecast in enumerate(forecasts):
-		input_valid[index, i] = forecast[4:]
-		forecaster_id = id2index.get(forecast[1], 1)
-		id_valid[index, i] = forecaster_id
-
-	forecast_dates = db_dates[ifp]
-	n_forecasts = len(forecast_dates)
-	activity_dates = [x[0] for x in forecasts]
-
-	answer, is_ordered = db_answer[ifp]
-	target_valid[forecast_index:forecast_index+n_forecasts, answer] = 1
-	answer_valid[forecast_index:forecast_index+n_forecasts] = answer
-	is_ordered_valid[forecast_index:forecast_index+n_forecasts] = is_ordered
-	weight_valid[forecast_index:forecast_index+n_forecasts] = ((1.0 / n_forecasts) / n_valid) * n_forecast_valid
-	state_valid[forecast_index:forecast_index+n_forecasts] = db_emb[ifp]
-	seq_length_mask_valid[index, :len(forecasts), :len(forecasts)] = 0
-
-	for i, forecast_date in enumerate(forecast_dates):
-		this_index = np.searchsorted(activity_dates, forecast_date)
-		if this_index == 0:
-			pdb.set_trace()
-			print('Unexpected. Forecast dates have been adjusted for activity dates')
-		gather_index_valid[forecast_index+i, :] = [index, this_index-1]
-
-	num_options = forecasts[0][3]
-	if num_options == 4:
-		is_4_valid[forecast_index:forecast_index+n_forecasts] = True
-	else:
-		if num_options == 3:
-			is_3_valid[forecast_index:forecast_index+n_forecasts] = True
-
-	num_option_ary_valid[forecast_index:forecast_index+n_forecasts] = num_options
-	num_option_mask_valid[forecast_index:forecast_index+n_forecasts, :num_options] = 0
-
-	index_map_valid[ifp] = list(range(forecast_index, forecast_index+n_forecasts))
-	forecast_index += n_forecasts
-
-input_valid[np.isnan(input_valid)] = 0
+all_iter_train, num_option_ary_train, index_map_train, answer_train, is_ordered_train = get_data(ifp_train)
+all_iter_valid, num_option_ary_valid, index_map_valid, answer_valid, is_ordered_valid = get_data(ifp_valid)
 
 # Network placeholder
 is_training = tf.placeholder_with_default(False, shape=(), name='is_training')
-input_placeholder = tf.placeholder(tf.float32, [None, max_steps, 5 + n_feature])
-id_placeholder = tf.placeholder(tf.int32, [None, max_steps])
-target_placeholder = tf.placeholder(tf.float32, [None, 5])
-is_ordered_placeholder = tf.placeholder(tf.bool, [None])
-is_4_placeholder = tf.placeholder(tf.bool, [None])
-is_3_placeholder = tf.placeholder(tf.bool, [None])
-weight_placeholder = tf.placeholder(tf.float32, [None])
-seq_length_mask_placeholder = tf.placeholder(tf.float32, [None, max_steps, max_steps])
-gather_index_placeholder = tf.placeholder(tf.int32, [None, 2])
-num_option_mask_placeholder = tf.placeholder(tf.float32, [None, 5])
-
 input_keep_prob = tf.cond(is_training, lambda:tf.constant(0.9), lambda:tf.constant(1.0))
 output_keep_prob = tf.cond(is_training, lambda:tf.constant(0.9), lambda:tf.constant(1.0))
 state_keep_prob = tf.cond(is_training, lambda:tf.constant(0.9), lambda:tf.constant(1.0))
 
+all_handle = tf.placeholder(tf.string, shape=[])
+[input_ph, id_ph, target_ph, is_ordered_ph, is_4_ph, is_3_ph, weight_ph, seq_length_mask_ph, gather_index_ph, num_option_mask_ph, state_ph] = \
+	tf.data.Iterator.from_string_handle(all_handle, (tf.float32, tf.int32, tf.float32, tf.bool, tf.bool, tf.bool, tf.float32, tf.float32, tf.int32, tf.float32, tf.float32), \
+	(tf.TensorShape([None, max_steps, 5 + n_feature + N_POS_DIM]), tf.TensorShape([None, max_steps]), tf.TensorShape([None, 5]), tf.TensorShape([None]), tf.TensorShape([None]), tf.TensorShape([None]), tf.TensorShape([None]), tf.TensorShape([None, max_steps, max_steps]), tf.TensorShape([None, 2]), tf.TensorShape([None, 5]), tf.TensorShape([None, 300]))).get_next()
+
+#[id_ph] = tf.data.Iterator.from_string_handle(id_handle, (tf.int32, ), (tf.TensorShape([None, max_steps]), )).get_next()
+#[target_ph] = tf.data.Iterator.from_string_handle(target_handle, (tf.float32, ), (tf.TensorShape([None, 5]), )).get_next()
+#[is_ordered_ph] = tf.data.Iterator.from_string_handle(is_ordered_handle, (tf.bool, ), (tf.TensorShape([None]), )).get_next()
+#[is_4_ph] = tf.data.Iterator.from_string_handle(is_4_handle, (tf.bool, ), (tf.TensorShape([None]), )).get_next()
+#[is_3_ph] = tf.data.Iterator.from_string_handle(is_3_handle, (tf.bool, ), (tf.TensorShape([None]), )).get_next()
+#[weight_ph] = tf.data.Iterator.from_string_handle(weight_handle, (tf.float32, ), (tf.TensorShape([None]), )).get_next()
+#[seq_length_mask_ph] = tf.data.Iterator.from_string_handle(seq_length_mask_handle, (tf.float32, ), (tf.TensorShape([None, max_steps, max_steps]), )).get_next()
+#[gather_index_ph] = tf.data.Iterator.from_string_handle(gather_index_handle, (tf.int32, ), (tf.TensorShape([None, 2]), )).get_next()
+#[num_option_mask_ph] = tf.data.Iterator.from_string_handle(num_option_mask_handle, (tf.float32, ), (tf.TensorShape([None, 5]), )).get_next()
+
+
+N_EMB_DIM = 300 - (5+n_feature+N_POS_DIM)
 embedding = tf.get_variable('embedding', shape=(len(id2index), N_EMB_DIM), initializer=tf.random_uniform_initializer(-math.sqrt(3), math.sqrt(3)))
-embedded_features = tf.nn.embedding_lookup(embedding, id_placeholder)
-combined_input = tf.nn.dropout(tf.concat([input_placeholder, embedded_features], 2), keep_prob=input_keep_prob)
+embedded_features = tf.nn.embedding_lookup(embedding, id_ph)
+combined_input = tf.nn.dropout(tf.concat([input_ph, embedded_features], 2), keep_prob=input_keep_prob)
 
-upper_triangle = tf.linalg.band_part(tf.constant(-1e32, shape=(max_steps, max_steps)), 0, -1)
-
-q_filter = tf.get_variable('q_w', shape=(1, 5+N_EMB_DIM+n_feature, N_Q_DIM))
-q_output = tf.nn.conv1d(combined_input, q_filter, stride=1, padding='VALID')
-k_filter = tf.get_variable('k_w', shape=(1, 5+N_EMB_DIM+n_feature, N_K_DIM))
+N_INPUT_DIM = 5+N_EMB_DIM+n_feature+N_POS_DIM
+k_filter = tf.get_variable('k_w', shape=(1, N_INPUT_DIM, N_K_DIM))
 k_output = tf.nn.conv1d(combined_input, k_filter, stride=1, padding='VALID')
-v_filter = tf.get_variable('v_w', shape=(1, 5+N_EMB_DIM+n_feature, N_V_DIM))
+v_filter = tf.get_variable('v_w', shape=(1, N_INPUT_DIM, N_V_DIM))
 v_output = tf.nn.conv1d(combined_input, v_filter, stride=1, padding='VALID')
 
-att_scores = tf.nn.softmax(tf.linalg.band_part(tf.matmul(q_output, tf.transpose(k_output, [0, 2, 1])) / (N_K_DIM ** 0.5), -1, 0) + upper_triangle + seq_length_mask_placeholder)
+W_emb = tf.get_variable('embedding_weight', shape=(300, N_K_DIM), initializer=tf.glorot_uniform_initializer())
+b_emb = tf.get_variable('embedding_bias', shape=(1, N_K_DIM), initializer=tf.zeros_initializer())
+zero_state = tf.expand_dims(tf.matmul(state_ph, W_emb) + b_emb, 1)
+
+#pdb.set_trace()
+
+n_sample = tf.shape(zero_state)[0]
+att_scores = tf.linalg.band_part(tf.broadcast_to(tf.expand_dims(tf.reduce_sum(k_output * zero_state, axis=2) / (N_K_DIM ** 0.5), 2), [n_sample, max_steps, max_steps]), -1, 0) * seq_length_mask_ph
 att_state_series = tf.nn.dropout(tf.matmul(att_scores, v_output), keep_prob=state_keep_prob)
 
-q_filter2 = tf.get_variable('q_w2', shape=(1, N_Q_DIM, N_Q_DIM))
-q_output2 = tf.nn.conv1d(att_state_series, q_filter2, stride=1, padding='VALID')
+'''
 k_filter2 = tf.get_variable('k_w2', shape=(1, N_K_DIM, N_K_DIM))
 k_output2 = tf.nn.conv1d(att_state_series, k_filter2, stride=1, padding='VALID')
 v_filter2 = tf.get_variable('v_w2', shape=(1, N_K_DIM, N_V_DIM))
 v_output2 = tf.nn.conv1d(att_state_series, v_filter2, stride=1, padding='VALID')
 
-att_scores2 = tf.nn.softmax(tf.linalg.band_part(tf.matmul(q_output2, tf.transpose(k_output2, [0, 2, 1])) / (N_K_DIM ** 0.5), -1, 0) + upper_triangle + seq_length_mask_placeholder)
-att_state_series2 =tf.nn.dropout(tf.matmul(att_scores2, v_output2), keep_prob=output_keep_prob)
+att_scores2 = tf.linalg.band_part(tf.broadcast_to(tf.expand_dims(tf.reduce_sum(k_output2 * zero_state, axis=2) / (N_K_DIM ** 0.5), 2), [n_sample, max_steps, max_steps]), -1, 0) * seq_length_mask_ph
+att_state_series2 = tf.nn.dropout(tf.matmul(att_scores, v_output), keep_prob=output_keep_prob)
 
-initial_state = tf.placeholder(tf.float32, [None, 300])
-W_emb = tf.get_variable('embedding_weight', shape=(300, N_WORD2VEC_DIM), initializer=tf.glorot_uniform_initializer())
-b_emb = tf.get_variable('embedding_bias', shape=(1, N_WORD2VEC_DIM), initializer=tf.zeros_initializer())
-zero_state = tf.matmul(initial_state, W_emb) + b_emb
+#att_state_series2 =tf.nn.dropout(tf.matmul(att_scores2, v_output2), keep_prob=output_keep_prob)
 
-needed_state = tf.gather_nd(att_state_series2, gather_index_placeholder)
-combined_state = tf.concat([needed_state, zero_state], 1)
+'''
+needed_state = tf.gather_nd(att_state_series, gather_index_ph)
+#combined_state = tf.concat([needed_state, zero_state], 1)
 
-W1 = tf.get_variable('weight1', shape=(N_V_DIM + N_WORD2VEC_DIM, 5), initializer=tf.glorot_uniform_initializer())
+#pdb.set_trace()
+W1 = tf.get_variable('weight1', shape=(N_K_DIM, 5), initializer=tf.glorot_uniform_initializer())
 b1 = tf.get_variable('bias1', shape=(1, 5), initializer=tf.zeros_initializer())
-prediction = tf.matmul(tf.nn.tanh(combined_state), W1) + b1
-prob = tf.nn.softmax(prediction + num_option_mask_placeholder)
+prediction = tf.matmul(needed_state, W1) + b1
+#prediction = needed_state
+#pdb.set_trace()
+prob = tf.nn.softmax(prediction + num_option_mask_ph)
 
-loss_mse = tf.math.reduce_sum(tf.math.squared_difference(target_placeholder, prob), axis=1)
+#prob = needed_state
+#pdb.set_trace()
+loss_mse = tf.math.reduce_sum(tf.math.squared_difference(target_ph, prob), axis=1)
 
 prob_1 = tf.stack([tf.reduce_sum(tf.gather(prob, [0], axis=1), axis=1), tf.reduce_sum(tf.gather(prob, [1, 2, 3, 4], axis=1), axis=1)], axis=1)
-true_1 = tf.stack([tf.reduce_sum(tf.gather(target_placeholder, [0], axis=1), axis=1), tf.reduce_sum(tf.gather(target_placeholder, [1, 2, 3, 4], axis=1), axis=1)], axis=1)
+true_1 = tf.stack([tf.reduce_sum(tf.gather(target_ph, [0], axis=1), axis=1), tf.reduce_sum(tf.gather(target_ph, [1, 2, 3, 4], axis=1), axis=1)], axis=1)
 loss_1 = tf.math.reduce_sum(tf.math.squared_difference(prob_1, true_1), axis=1)
 
 prob_2 = tf.stack([tf.reduce_sum(tf.gather(prob, [0, 1], axis=1), axis=1), tf.reduce_sum(tf.gather(prob, [2, 3, 4], axis=1), axis=1)], axis=1)
-true_2 = tf.stack([tf.reduce_sum(tf.gather(target_placeholder, [0, 1], axis=1), axis=1), tf.reduce_sum(tf.gather(target_placeholder, [2, 3, 4], axis=1), axis=1)], axis=1)
+true_2 = tf.stack([tf.reduce_sum(tf.gather(target_ph, [0, 1], axis=1), axis=1), tf.reduce_sum(tf.gather(target_ph, [2, 3, 4], axis=1), axis=1)], axis=1)
 loss_2 = tf.math.reduce_sum(tf.math.squared_difference(prob_2, true_2), axis=1)
 
 prob_3 = tf.stack([tf.reduce_sum(tf.gather(prob, [0, 1, 2], axis=1), axis=1), tf.reduce_sum(tf.gather(prob, [3, 4], axis=1), axis=1)], axis=1)
-true_3 = tf.stack([tf.reduce_sum(tf.gather(target_placeholder, [0, 1, 2], axis=1), axis=1), tf.reduce_sum(tf.gather(target_placeholder, [3, 4], axis=1), axis=1)], axis=1)
+true_3 = tf.stack([tf.reduce_sum(tf.gather(target_ph, [0, 1, 2], axis=1), axis=1), tf.reduce_sum(tf.gather(target_ph, [3, 4], axis=1), axis=1)], axis=1)
 loss_3 = tf.math.reduce_sum(tf.math.squared_difference(prob_3, true_3), axis=1)
 
 prob_4 = tf.stack([tf.reduce_sum(tf.gather(prob, [0, 1, 2, 3], axis=1), axis=1), tf.reduce_sum(tf.gather(prob, [4], axis=1), axis=1)], axis=1)
-true_4 = tf.stack([tf.reduce_sum(tf.gather(target_placeholder, [0, 1, 2, 3], axis=1), axis=1), tf.reduce_sum(tf.gather(target_placeholder, [4], axis=1), axis=1)], axis=1)
+true_4 = tf.stack([tf.reduce_sum(tf.gather(target_ph, [0, 1, 2, 3], axis=1), axis=1), tf.reduce_sum(tf.gather(target_ph, [4], axis=1), axis=1)], axis=1)
 loss_4 = tf.math.reduce_sum(tf.math.squared_difference(prob_4, true_4), axis=1)
 
 loss_brier = tf.math.reduce_mean(tf.stack([loss_1, loss_2, loss_3, loss_4], axis=1), axis=1)
 
 
 prob_4_1 = tf.stack([tf.reduce_sum(tf.gather(prob, [0], axis=1), axis=1), tf.reduce_sum(tf.gather(prob, [1, 2, 3], axis=1), axis=1)], axis=1)
-true_4_1 = tf.stack([tf.reduce_sum(tf.gather(target_placeholder, [0], axis=1), axis=1), tf.reduce_sum(tf.gather(target_placeholder, [1, 2, 3], axis=1), axis=1)], axis=1)
+true_4_1 = tf.stack([tf.reduce_sum(tf.gather(target_ph, [0], axis=1), axis=1), tf.reduce_sum(tf.gather(target_ph, [1, 2, 3], axis=1), axis=1)], axis=1)
 loss_4_1 = tf.math.reduce_sum(tf.math.squared_difference(prob_4_1, true_4_1), axis=1)
 
 prob_4_2 = tf.stack([tf.reduce_sum(tf.gather(prob, [0, 1], axis=1), axis=1), tf.reduce_sum(tf.gather(prob, [2, 3], axis=1), axis=1)], axis=1)
-true_4_2 = tf.stack([tf.reduce_sum(tf.gather(target_placeholder, [0, 1], axis=1), axis=1), tf.reduce_sum(tf.gather(target_placeholder, [2, 3], axis=1), axis=1)], axis=1)
+true_4_2 = tf.stack([tf.reduce_sum(tf.gather(target_ph, [0, 1], axis=1), axis=1), tf.reduce_sum(tf.gather(target_ph, [2, 3], axis=1), axis=1)], axis=1)
 loss_4_2 = tf.math.reduce_sum(tf.math.squared_difference(prob_4_2, true_4_2), axis=1)
 
 prob_4_3 = tf.stack([tf.reduce_sum(tf.gather(prob, [0, 1, 2], axis=1), axis=1), tf.reduce_sum(tf.gather(prob, [3], axis=1), axis=1)], axis=1)
-true_4_3 = tf.stack([tf.reduce_sum(tf.gather(target_placeholder, [0, 1, 2], axis=1), axis=1), tf.reduce_sum(tf.gather(target_placeholder, [3], axis=1), axis=1)], axis=1)
+true_4_3 = tf.stack([tf.reduce_sum(tf.gather(target_ph, [0, 1, 2], axis=1), axis=1), tf.reduce_sum(tf.gather(target_ph, [3], axis=1), axis=1)], axis=1)
 loss_4_3 = tf.math.reduce_sum(tf.math.squared_difference(prob_4_3, true_4_3), axis=1)
 
 loss_brier_4 = tf.math.reduce_mean(tf.stack([loss_4_1, loss_4_2, loss_4_3], axis=1), axis=1)
 
 prob_3_1 = tf.stack([tf.reduce_sum(tf.gather(prob, [0], axis=1), axis=1), tf.reduce_sum(tf.gather(prob, [1, 2], axis=1), axis=1)], axis=1)
-true_3_1 = tf.stack([tf.reduce_sum(tf.gather(target_placeholder, [0], axis=1), axis=1), tf.reduce_sum(tf.gather(target_placeholder, [1, 2], axis=1), axis=1)], axis=1)
+true_3_1 = tf.stack([tf.reduce_sum(tf.gather(target_ph, [0], axis=1), axis=1), tf.reduce_sum(tf.gather(target_ph, [1, 2], axis=1), axis=1)], axis=1)
 loss_3_1 = tf.math.reduce_sum(tf.math.squared_difference(prob_3_1, true_3_1), axis=1)
 
 prob_3_2 = tf.stack([tf.reduce_sum(tf.gather(prob, [0, 1], axis=1), axis=1), tf.reduce_sum(tf.gather(prob, [2], axis=1), axis=1)], axis=1)
-true_3_2 = tf.stack([tf.reduce_sum(tf.gather(target_placeholder, [0, 1], axis=1), axis=1), tf.reduce_sum(tf.gather(target_placeholder, [2], axis=1), axis=1)], axis=1)
+true_3_2 = tf.stack([tf.reduce_sum(tf.gather(target_ph, [0, 1], axis=1), axis=1), tf.reduce_sum(tf.gather(target_ph, [2], axis=1), axis=1)], axis=1)
 loss_3_2 = tf.math.reduce_sum(tf.math.squared_difference(prob_3_2, true_3_2), axis=1)
 
 loss_brier_3 = tf.math.reduce_mean(tf.stack([loss_3_1, loss_3_2], axis=1), axis=1)
 
-#loss_combined = tf.where(is_ordered_placeholder, loss_brier, loss_mse)
-loss_combined = tf.where(is_ordered_placeholder, tf.where(is_4_placeholder, loss_brier_4, tf.where(is_3_placeholder, loss_brier_3, loss_brier)), loss_mse)
-
-loss_weighted = tf.losses.compute_weighted_loss(loss_combined, weight_placeholder)
+loss_combined = tf.where(is_ordered_ph, tf.where(is_4_ph, loss_brier_4, tf.where(is_3_ph, loss_brier_3, loss_brier)), loss_mse)
+loss_weighted = tf.losses.compute_weighted_loss(loss_combined, weight_ph)
 
 
 loss_weighted_reg = loss_weighted
 variables = [v for v in tf.trainable_variables()]
 
 for v in variables:
-	loss_weighted_reg += 5e-4 * tf.nn.l2_loss(v) + 1e-8 * tf.losses.absolute_difference(v, tf.zeros(tf.shape(v)))
+	loss_weighted_reg += 1e-8 * tf.nn.l2_loss(v)# + 1e-8 * tf.losses.absolute_difference(v, tf.zeros(tf.shape(v)))
 
-lr = tf.Variable(0.01, trainable=False)
+lr = tf.Variable(0.1, trainable=False)
 lr_decay_op = lr.assign(lr * 0.95)
 optimizer = tf.train.AdamOptimizer(lr)
 
 gradients, variables = zip(*optimizer.compute_gradients(loss_weighted_reg))
-gradients, _ = tf.clip_by_global_norm(gradients, 5.0)
+#gradients, _ = tf.clip_by_global_norm(gradients, 5.0)
 train_op = optimizer.apply_gradients(zip(gradients, variables))
 
 saver = tf.train.Saver()
@@ -546,14 +531,17 @@ save_path = save_dir + '/model.ckpt'
 
 with tf.Session() as sess:
 	sess.run(tf.global_variables_initializer())
+	all_handle_train = sess.run(all_iter_train.string_handle())
+	all_handle_valid = sess.run(all_iter_valid.string_handle())
 
+	#pdb.set_trace()
 	valid_scores = []
 	smallest_loss = float('inf')
 	smallest_train_loss = float('inf')
 
 	wait = 0
 	n_lr_decay = 5
-	n_reset_weight = 20
+	n_reset_weight = 200
 	smallest_weight = None
 
 	def _save_weight():
@@ -568,39 +556,20 @@ with tf.Session() as sess:
 			ops.append(tf.assign(tf_vars[i_tf], smallest_weight[i_tf]))
 		sess.run(ops)
 
-	for i in range(100):
+	for i in range(200):
 		train_loss, train_pred, _train_step = sess.run(
 			[loss_weighted, prob, train_op],
 				feed_dict={
-					input_placeholder: input_train,
-					id_placeholder: id_train,
-					target_placeholder: target_train,
-					is_ordered_placeholder: is_ordered_train,
-					is_4_placeholder: is_4_train,
-					is_3_placeholder: is_3_train,
-					weight_placeholder: weight_train,
-					seq_length_mask_placeholder: seq_length_mask_train,
-					gather_index_placeholder: gather_index_train,
-					num_option_mask_placeholder: num_option_mask_train,
-					initial_state: state_train,
+					all_handle: all_handle_train,
 					is_training: True
 				}
 		)
+		#pdb.set_trace()
 
 		valid_loss, valid_pred = sess.run(
 			[loss_weighted, prob],
 				feed_dict={
-					input_placeholder: input_valid,
-					id_placeholder: id_valid,
-					target_placeholder: target_valid,
-					is_ordered_placeholder: is_ordered_valid,
-					is_4_placeholder: is_4_valid,
-					is_3_placeholder: is_3_valid,
-					weight_placeholder: weight_valid,
-					seq_length_mask_placeholder: seq_length_mask_valid,
-					gather_index_placeholder: gather_index_valid,
-					num_option_mask_placeholder: num_option_mask_valid,
-					initial_state: state_valid,
+					all_handle: all_handle_valid,
 					is_training: False
 				}
 		)
@@ -650,17 +619,7 @@ with tf.Session() as sess:
 	valid_loss, valid_pred = sess.run(
 		[loss_weighted, prob],
 			feed_dict={
-				input_placeholder: input_valid,
-				id_placeholder: id_valid,
-				target_placeholder: target_valid,
-				is_ordered_placeholder: is_ordered_valid,
-				is_4_placeholder: is_4_valid,
-				is_3_placeholder: is_3_valid,
-				weight_placeholder: weight_valid,
-				seq_length_mask_placeholder: seq_length_mask_valid,
-				gather_index_placeholder: gather_index_valid,
-				num_option_mask_placeholder: num_option_mask_valid,
-				initial_state: state_valid,
+				all_handle: all_handle_valid,
 				is_training: False
 			}
 	)
