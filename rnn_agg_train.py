@@ -159,9 +159,10 @@ for index, row in ts_feature_rctc.iterrows():
 		pdb.set_trace()
 		print('Duplicate feature')
 	else:
-		pdb.set_trace()
 		ts_dict[ifp_id][date] = row.drop(labels=['ifp_id', 'date']).values
 
+print('OK')
+exit()
 def get_feature(ifp_id, date):
 	if ifp_id in human_dict and date in human_dict[ifp_id]:
 		hf = human_dict[ifp_id][date]
